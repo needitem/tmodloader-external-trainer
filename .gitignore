@@ -1,0 +1,16 @@
+# Build output
+bin/
+obj/
+*.user
+
+# Visual Studio / Rider
+.vs/
+.idea/
+
+# OS
+Thumbs.db
+desktop.ini
+
+# Diag scratch data copies
+diag/bin/
+diag/obj/

@@ -1,0 +1,690 @@
+[
+ {
+  "id": "6200",
+  "name": "⌨ Ctrl+F2: Max Stack ALL inventory items (hotkey)",
+  "mode": "maxstack"
+ },
+ {
+  "id": "6100",
+  "name": "No Mana Sickness",
+  "mode": "clear",
+  "buff": 94
+ },
+ {
+  "id": "6101",
+  "name": "No Potion Sickness",
+  "mode": "clear",
+  "buff": 21
+ },
+ {
+  "id": "10807",
+  "name": "No Chaos Rod Cooldown",
+  "mode": "clear",
+  "buff": 88
+ },
+ {
+  "id": "9001",
+  "name": "☑ [7] Magic Power (+20% magic damage)",
+  "mode": "apply",
+  "buff": 7,
+  "duration": 219600
+ },
+ {
+  "id": "9002",
+  "name": "☑ [13] Battle (+100% spawn rate)",
+  "mode": "apply",
+  "buff": 13,
+  "duration": 219600
+ },
+ {
+  "id": "9003",
+  "name": "☑ [14] Thorns (return damage)",
+  "mode": "apply",
+  "buff": 14,
+  "duration": 219600
+ },
+ {
+  "id": "9004",
+  "name": "☑ [16] Archery (+20% arrow dmg)",
+  "mode": "apply",
+  "buff": 16,
+  "duration": 219600
+ },
+ {
+  "id": "9005",
+  "name": "☑ [25] Tipsy (+10% melee speed -4 def)",
+  "mode": "apply",
+  "buff": 25,
+  "duration": 219600
+ },
+ {
+  "id": "9006",
+  "name": "☑ [28] Werewolf (+melee stats at night)",
+  "mode": "apply",
+  "buff": 28,
+  "duration": 219600
+ },
+ {
+  "id": "9007",
+  "name": "☑ [60] Leaf Crystal (chlorophyte projectiles)",
+  "mode": "apply",
+  "buff": 60,
+  "duration": 219600
+ },
+ {
+  "id": "9008",
+  "name": "☑ [71] Weapon Imbue: Venom (melee inflicts venom)",
+  "mode": "apply",
+  "buff": 71,
+  "duration": 219600
+ },
+ {
+  "id": "9009",
+  "name": "☑ [73] Weapon Imbue: Cursed Flames (melee inflicts cursed flames)",
+  "mode": "apply",
+  "buff": 73,
+  "duration": 219600
+ },
+ {
+  "id": "9010",
+  "name": "☑ [74] Weapon Imbue: Fire (melee inflicts fire)",
+  "mode": "apply",
+  "buff": 74,
+  "duration": 219600
+ },
+ {
+  "id": "9011",
+  "name": "☑ [75] Weapon Imbue: Gold (melee inflicts midas)",
+  "mode": "apply",
+  "buff": 75,
+  "duration": 219600
+ },
+ {
+  "id": "9012",
+  "name": "☑ [76] Weapon Imbue: Ichor (melee inflicts ichor)",
+  "mode": "apply",
+  "buff": 76,
+  "duration": 219600
+ },
+ {
+  "id": "9013",
+  "name": "☑ [77] Weapon Imbue: Nanites (melee inflicts confused)",
+  "mode": "apply",
+  "buff": 77,
+  "duration": 219600
+ },
+ {
+  "id": "9014",
+  "name": "☑ [78] Weapon Imbue: Confetti (melee causes confetti)",
+  "mode": "apply",
+  "buff": 78,
+  "duration": 219600
+ },
+ {
+  "id": "9015",
+  "name": "☑ [79] Weapon Imbue: Poison (melee inflicts poison)",
+  "mode": "apply",
+  "buff": 79,
+  "duration": 219600
+ },
+ {
+  "id": "9016",
+  "name": "☑ [86] Water Candle (+33% spawn rate)",
+  "mode": "apply",
+  "buff": 86,
+  "duration": 219600
+ },
+ {
+  "id": "9017",
+  "name": "☑ [93] Ammo Box (+20% ammo conservation)",
+  "mode": "apply",
+  "buff": 93,
+  "duration": 219600
+ },
+ {
+  "id": "9018",
+  "name": "☑ [98] Beetle Might 1 (+10% melee)",
+  "mode": "apply",
+  "buff": 98,
+  "duration": 219600
+ },
+ {
+  "id": "9019",
+  "name": "☑ [99] Beetle Might 2 (+20% melee)",
+  "mode": "apply",
+  "buff": 99,
+  "duration": 219600
+ },
+ {
+  "id": "9020",
+  "name": "☑ [100] Beetle Might 3 (+30% melee)",
+  "mode": "apply",
+  "buff": 100,
+  "duration": 219600
+ },
+ {
+  "id": "9021",
+  "name": "☑ [108] Titan (+knockback)",
+  "mode": "apply",
+  "buff": 108,
+  "duration": 219600
+ },
+ {
+  "id": "9022",
+  "name": "☑ [110] Summoning (+1 max minion)",
+  "mode": "apply",
+  "buff": 110,
+  "duration": 219600
+ },
+ {
+  "id": "9023",
+  "name": "☑ [112] Ammo Reservation (+20% ammo conserve)",
+  "mode": "apply",
+  "buff": 112,
+  "duration": 219600
+ },
+ {
+  "id": "9024",
+  "name": "☑ [115] Rage (+10% crit chance)",
+  "mode": "apply",
+  "buff": 115,
+  "duration": 219600
+ },
+ {
+  "id": "9025",
+  "name": "☑ [116] Inferno (fire ring aura)",
+  "mode": "apply",
+  "buff": 116,
+  "duration": 219600
+ },
+ {
+  "id": "9026",
+  "name": "☑ [117] Wrath (+10% damage)",
+  "mode": "apply",
+  "buff": 117,
+  "duration": 219600
+ },
+ {
+  "id": "9027",
+  "name": "☑ [159] Sharpened (+12% armor pen)",
+  "mode": "apply",
+  "buff": 159,
+  "duration": 219600
+ },
+ {
+  "id": "9028",
+  "name": "☑ [198] Striking Moment (next hit 5x dmg)",
+  "mode": "apply",
+  "buff": 198,
+  "duration": 219600
+ },
+ {
+  "id": "9030",
+  "name": "☑ [2] Regeneration (+2 HP/sec)",
+  "mode": "apply",
+  "buff": 2,
+  "duration": 219600
+ },
+ {
+  "id": "9031",
+  "name": "☑ [5] Ironskin (+8 defense)",
+  "mode": "apply",
+  "buff": 5,
+  "duration": 219600
+ },
+ {
+  "id": "9032",
+  "name": "☑ [6] Mana Regeneration (+mana regen)",
+  "mode": "apply",
+  "buff": 6,
+  "duration": 219600
+ },
+ {
+  "id": "9033",
+  "name": "☑ [43] Paladin Shield (25% dmg redirect)",
+  "mode": "apply",
+  "buff": 43,
+  "duration": 219600
+ },
+ {
+  "id": "9034",
+  "name": "☑ [58] Rapid Healing (rapid life recovery)",
+  "mode": "apply",
+  "buff": 58,
+  "duration": 219600
+ },
+ {
+  "id": "9035",
+  "name": "☑ [59] Holy Protection (dodge next attack)",
+  "mode": "apply",
+  "buff": 59,
+  "duration": 219600
+ },
+ {
+  "id": "9036",
+  "name": "☑ [62] Ice Barrier (+25 defense)",
+  "mode": "apply",
+  "buff": 62,
+  "duration": 219600
+ },
+ {
+  "id": "9037",
+  "name": "☑ [63] Panic! (+100% speed after hit)",
+  "mode": "apply",
+  "buff": 63,
+  "duration": 219600
+ },
+ {
+  "id": "9038",
+  "name": "☑ [95] Beetle Endurance 1 (-15% dmg taken)",
+  "mode": "apply",
+  "buff": 95,
+  "duration": 219600
+ },
+ {
+  "id": "9039",
+  "name": "☑ [96] Beetle Endurance 2 (-30% dmg taken)",
+  "mode": "apply",
+  "buff": 96,
+  "duration": 219600
+ },
+ {
+  "id": "9040",
+  "name": "☑ [97] Beetle Endurance 3 (-45% dmg taken)",
+  "mode": "apply",
+  "buff": 97,
+  "duration": 219600
+ },
+ {
+  "id": "9041",
+  "name": "☑ [113] Lifeforce (+20% max HP)",
+  "mode": "apply",
+  "buff": 113,
+  "duration": 219600
+ },
+ {
+  "id": "9042",
+  "name": "☑ [114] Endurance (-10% dmg taken)",
+  "mode": "apply",
+  "buff": 114,
+  "duration": 219600
+ },
+ {
+  "id": "9043",
+  "name": "☑ [124] Warmth (-30% cold dmg)",
+  "mode": "apply",
+  "buff": 124,
+  "duration": 219600
+ },
+ {
+  "id": "9044",
+  "name": "☑ [148] Bast Defense (+5 defense)",
+  "mode": "apply",
+  "buff": 148,
+  "duration": 219600
+ },
+ {
+  "id": "9045",
+  "name": "☑ [165] Dryad Blessing (+8 def +thorns)",
+  "mode": "apply",
+  "buff": 165,
+  "duration": 219600
+ },
+ {
+  "id": "9047",
+  "name": "☑ [1] Obsidian Skin (lava/fire immunity)",
+  "mode": "apply",
+  "buff": 1,
+  "duration": 219600
+ },
+ {
+  "id": "9048",
+  "name": "☑ [3] Swiftness (+25% move speed)",
+  "mode": "apply",
+  "buff": 3,
+  "duration": 219600
+ },
+ {
+  "id": "9049",
+  "name": "☑ [4] Gills (breathe underwater)",
+  "mode": "apply",
+  "buff": 4,
+  "duration": 219600
+ },
+ {
+  "id": "9050",
+  "name": "☑ [8] Featherfall (slow falling)",
+  "mode": "apply",
+  "buff": 8,
+  "duration": 219600
+ },
+ {
+  "id": "9051",
+  "name": "☑ [9] Spelunker (highlight ores)",
+  "mode": "apply",
+  "buff": 9,
+  "duration": 219600
+ },
+ {
+  "id": "9052",
+  "name": "☑ [10] Invisibility (invisible)",
+  "mode": "apply",
+  "buff": 10,
+  "duration": 219600
+ },
+ {
+  "id": "9053",
+  "name": "☑ [11] Shine (emit light)",
+  "mode": "apply",
+  "buff": 11,
+  "duration": 219600
+ },
+ {
+  "id": "9054",
+  "name": "☑ [12] Night Owl (night vision)",
+  "mode": "apply",
+  "buff": 12,
+  "duration": 219600
+ },
+ {
+  "id": "9055",
+  "name": "☑ [15] Water Walking (walk on liquids)",
+  "mode": "apply",
+  "buff": 15,
+  "duration": 219600
+ },
+ {
+  "id": "9056",
+  "name": "☑ [17] Hunter (show enemies)",
+  "mode": "apply",
+  "buff": 17,
+  "duration": 219600
+ },
+ {
+  "id": "9057",
+  "name": "☑ [18] Gravitation (flip gravity)",
+  "mode": "apply",
+  "buff": 18,
+  "duration": 219600
+ },
+ {
+  "id": "9058",
+  "name": "☑ [26] Well Fed (+3 def +2% stats)",
+  "mode": "apply",
+  "buff": 26,
+  "duration": 219600
+ },
+ {
+  "id": "9059",
+  "name": "☑ [29] Clairvoyance (+5% dmg/crit +mana)",
+  "mode": "apply",
+  "buff": 29,
+  "duration": 219600
+ },
+ {
+  "id": "9060",
+  "name": "☑ [34] Merfolk (breathe+swim underwater)",
+  "mode": "apply",
+  "buff": 34,
+  "duration": 219600
+ },
+ {
+  "id": "9061",
+  "name": "☑ [48] Honey (life regen boost)",
+  "mode": "apply",
+  "buff": 48,
+  "duration": 219600
+ },
+ {
+  "id": "9062",
+  "name": "☑ [87] Cozy Fire (campfire regen)",
+  "mode": "apply",
+  "buff": 87,
+  "duration": 219600
+ },
+ {
+  "id": "9063",
+  "name": "☑ [89] Heart Lamp (lantern regen)",
+  "mode": "apply",
+  "buff": 89,
+  "duration": 219600
+ },
+ {
+  "id": "9064",
+  "name": "☑ [104] Mining (+25% mine speed)",
+  "mode": "apply",
+  "buff": 104,
+  "duration": 219600
+ },
+ {
+  "id": "9065",
+  "name": "☑ [105] Heartreach (+heart pickup range)",
+  "mode": "apply",
+  "buff": 105,
+  "duration": 219600
+ },
+ {
+  "id": "9066",
+  "name": "☑ [106] Calm (-17% spawn rate)",
+  "mode": "apply",
+  "buff": 106,
+  "duration": 219600
+ },
+ {
+  "id": "9067",
+  "name": "☑ [107] Builder (+25% placement)",
+  "mode": "apply",
+  "buff": 107,
+  "duration": 219600
+ },
+ {
+  "id": "9068",
+  "name": "☑ [109] Flipper (swim freely)",
+  "mode": "apply",
+  "buff": 109,
+  "duration": 219600
+ },
+ {
+  "id": "9069",
+  "name": "☑ [111] Dangersense (highlight traps)",
+  "mode": "apply",
+  "buff": 111,
+  "duration": 219600
+ },
+ {
+  "id": "9070",
+  "name": "☑ [121] Fishing (+15% fish power)",
+  "mode": "apply",
+  "buff": 121,
+  "duration": 219600
+ },
+ {
+  "id": "9071",
+  "name": "☑ [122] Sonar (see fish biting)",
+  "mode": "apply",
+  "buff": 122,
+  "duration": 219600
+ },
+ {
+  "id": "9072",
+  "name": "☑ [123] Crate (+10% crate chance)",
+  "mode": "apply",
+  "buff": 123,
+  "duration": 219600
+ },
+ {
+  "id": "9073",
+  "name": "☑ [146] Happy! (+movement +happiness)",
+  "mode": "apply",
+  "buff": 146,
+  "duration": 219600
+ },
+ {
+  "id": "9074",
+  "name": "☑ [192] Sugar Rush (+20% move/mine)",
+  "mode": "apply",
+  "buff": 192,
+  "duration": 219600
+ },
+ {
+  "id": "9076",
+  "name": "☑ [72] Midas (enemies drop more coins)",
+  "mode": "apply",
+  "buff": 72,
+  "duration": 219600
+ },
+ {
+  "id": "9077",
+  "name": "☑ [103] Wet (fire immunity, dripping)",
+  "mode": "apply",
+  "buff": 103,
+  "duration": 219600
+ },
+ {
+  "id": "9078",
+  "name": "☑ [147] Banner (bonus vs enemies)",
+  "mode": "apply",
+  "buff": 147,
+  "duration": 219600
+ },
+ {
+  "id": "9079",
+  "name": "☑ [149] Bewitched (+1 max minion)",
+  "mode": "apply",
+  "buff": 149,
+  "duration": 219600
+ },
+ {
+  "id": "9080",
+  "name": "☑ [151] Peace Candle (-23% spawn rate)",
+  "mode": "apply",
+  "buff": 151,
+  "duration": 219600
+ },
+ {
+  "id": "9081",
+  "name": "☑ [152] Star in a Bottle (+mana regen)",
+  "mode": "apply",
+  "buff": 152,
+  "duration": 219600
+ },
+ {
+  "id": "9082",
+  "name": "☑ [157] Plenty Satisfied (+4 def +3% stats)",
+  "mode": "apply",
+  "buff": 157,
+  "duration": 219600
+ },
+ {
+  "id": "9083",
+  "name": "☑ [158] Exquisitely Stuffed (+5 def +4% stats)",
+  "mode": "apply",
+  "buff": 158,
+  "duration": 219600
+ },
+ {
+  "id": "9084",
+  "name": "☑ [173] Nebula Life 1 (+regen)",
+  "mode": "apply",
+  "buff": 173,
+  "duration": 219600
+ },
+ {
+  "id": "9085",
+  "name": "☑ [174] Nebula Life 2 (+regen x2)",
+  "mode": "apply",
+  "buff": 174,
+  "duration": 219600
+ },
+ {
+  "id": "9086",
+  "name": "☑ [175] Nebula Life 3 (+regen x3)",
+  "mode": "apply",
+  "buff": 175,
+  "duration": 219600
+ },
+ {
+  "id": "9087",
+  "name": "☑ [176] Nebula Damage 1 (+15% dmg)",
+  "mode": "apply",
+  "buff": 176,
+  "duration": 219600
+ },
+ {
+  "id": "9088",
+  "name": "☑ [177] Nebula Damage 2 (+30% dmg)",
+  "mode": "apply",
+  "buff": 177,
+  "duration": 219600
+ },
+ {
+  "id": "9089",
+  "name": "☑ [178] Nebula Damage 3 (+45% dmg)",
+  "mode": "apply",
+  "buff": 178,
+  "duration": 219600
+ },
+ {
+  "id": "9090",
+  "name": "☑ [179] Nebula Mana 1 (+mana regen)",
+  "mode": "apply",
+  "buff": 179,
+  "duration": 219600
+ },
+ {
+  "id": "9091",
+  "name": "☑ [180] Nebula Mana 2 (+mana regen x2)",
+  "mode": "apply",
+  "buff": 180,
+  "duration": 219600
+ },
+ {
+  "id": "9092",
+  "name": "☑ [181] Nebula Mana 3 (+mana regen x3)",
+  "mode": "apply",
+  "buff": 181,
+  "duration": 219600
+ },
+ {
+  "id": "9093",
+  "name": "☑ [182] Solar Blaze 1 (shield 1)",
+  "mode": "apply",
+  "buff": 182,
+  "duration": 219600
+ },
+ {
+  "id": "9094",
+  "name": "☑ [183] Solar Blaze 2 (shield 2)",
+  "mode": "apply",
+  "buff": 183,
+  "duration": 219600
+ },
+ {
+  "id": "9095",
+  "name": "☑ [184] Solar Blaze 3 (shield 3)",
+  "mode": "apply",
+  "buff": 184,
+  "duration": 219600
+ },
+ {
+  "id": "9096",
+  "name": "☑ [190] Vortex Boost (stealth mode)",
+  "mode": "apply",
+  "buff": 190,
+  "duration": 219600
+ },
+ {
+  "id": "9097",
+  "name": "☑ [195] Lucky (+luck)",
+  "mode": "apply",
+  "buff": 195,
+  "duration": 219600
+ },
+ {
+  "id": "9098",
+  "name": "☑ [196] Torch God Favor (auto biome torches)",
+  "mode": "apply",
+  "buff": 196,
+  "duration": 219600
+ }
+]

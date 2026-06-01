@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>TerrariaTrainer</AssemblyName>
+    <RootNamespace>TerrariaTrainer</RootNamespace>
+    <!-- Target game (Terraria 1.4.5.5) is a 32-bit process; the trainer itself
+         runs as x64 and talks to it via ReadProcessMemory/WriteProcessMemory.
+         Cross-bitness RPM/WPM/VirtualAllocEx is fine. -->
+    <Platforms>AnyCPU</Platforms>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Cheat definitions generated from the CT file -->
+    <None Update="Data\**\*.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Diagnostics.Runtime" Version="4.0.726401" />
+  </ItemGroup>
+
+</Project>
