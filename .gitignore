@@ -14,3 +14,6 @@ desktop.ini
 # Diag scratch data copies
 diag/bin/
 diag/obj/
+
+# Publish output / release artifacts
+publish/
