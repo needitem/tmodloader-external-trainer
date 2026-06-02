@@ -1,4 +1,22 @@
 [
-  { "group": "❤️ Vitals (these freeze reliably)", "desc": "Life — freeze for infinite HP", "field": "statLife", "kind": "value" },
-  { "group": "❤️ Vitals (these freeze reliably)", "desc": "Mana — freeze (set high) for infinite mana", "field": "statMana", "kind": "value" }
+  { "group": "❤️ Vitals", "desc": "Life — freeze for infinite HP", "field": "statLife", "kind": "value" },
+  { "group": "❤️ Vitals", "desc": "Mana — freeze (set high) for infinite mana", "field": "statMana", "kind": "value" },
+
+  { "group": "👁️ Vision (code injection)", "desc": "Spelunker (highlight ores)", "field": "findTreasure", "kind": "inject" },
+  { "group": "👁️ Vision (code injection)", "desc": "Night Vision", "field": "nightVision", "kind": "inject" },
+  { "group": "👁️ Vision (code injection)", "desc": "Hunter (highlight enemies)", "field": "detectCreature", "kind": "inject" },
+  { "group": "👁️ Vision (code injection)", "desc": "Dangersense (highlight traps)", "field": "dangerSense", "kind": "inject" },
+  { "group": "👁️ Vision (code injection)", "desc": "Invisible", "field": "invis", "kind": "inject" },
+
+  { "group": "🛡️ Survival (code injection)", "desc": "No Fall Damage", "field": "noFallDmg", "kind": "inject" },
+  { "group": "🛡️ Survival (code injection)", "desc": "No Knockback", "field": "noKnockback", "kind": "inject" },
+  { "group": "🛡️ Survival (code injection)", "desc": "Fire Block Immunity (Fire Walk)", "field": "fireWalk", "kind": "inject" },
+  { "group": "🛡️ Survival (code injection)", "desc": "Lava Immunity (Magma Stone)", "field": "magmaStone", "kind": "inject" },
+
+  { "group": "🏃 Movement (code injection)", "desc": "Water Walking", "field": "waterWalk", "kind": "inject" },
+
+  { "group": "⛏️ Speed (high-frequency write)", "desc": "Instant Mining (pickSpeed→0.1)", "field": "pickSpeed", "kind": "fast", "value": "0.1" },
+  { "group": "⛏️ Speed (high-frequency write)", "desc": "Instant Wall Removal", "field": "wallSpeed", "kind": "fast", "value": "0.1" },
+  { "group": "⛏️ Speed (high-frequency write)", "desc": "Instant Tile Placement", "field": "tileSpeed", "kind": "fast", "value": "0.1" },
+  { "group": "⛏️ Speed (high-frequency write)", "desc": "Move Speed x3 (moveSpeed→3)", "field": "moveSpeed", "kind": "fast", "value": "3" }
 ]

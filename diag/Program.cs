@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using TerrariaTrainer;
 using TerrariaTrainer.Core;
 using TerrariaTrainer.Memory;
@@ -77,9 +78,95 @@ if (mode == "tml")
     return 0;
 }
 
+if (mode == "injecttest")
+{
+    using var engine = new TmlEngine();
+    engine.Log += Console.WriteLine;
+    engine.Attach();
+    IntPtr pb = IntPtr.Zero;
+    for (int i = 0; i < 60 && pb == IntPtr.Zero; i++) { pb = engine.PlayerBase(); if (pb == IntPtr.Zero) System.Threading.Thread.Sleep(500); }
+    if (pb == IntPtr.Zero) { Console.WriteLine("No world."); return 0; }
+
+    var tests = new (string name, string val)[] {
+        ("findTreasure","true"), ("nightVision","true"), ("detectCreature","true"), ("invis","true"),
+        ("noFallDmg","true"), ("noKnockback","true"), ("fireWalk","true"), ("waterWalk","true"),
+        ("pickSpeed","0.1"), ("wallSpeed","0.1"), ("tileSpeed","0.1"), ("moveSpeed","3"),
+    };
+    foreach (var (name, val) in tests)
+    {
+        var f = engine.Model!.PlayerFields.FirstOrDefault(x => x.Name == name);
+        if (f == null) { Console.WriteLine($"  {name}: (no field)"); continue; }
+        var fr = engine.Injector!.FindReset(name);
+        if (fr.addr == IntPtr.Zero) { Console.WriteLine($"  {name,-14}: reset instruction NOT found"); continue; }
+        try
+        {
+            engine.Injector!.Patch(name);
+            engine.WriteField(f, val);   // single write — must persist if reset is NOP'd
+            int held = 0;
+            for (int s = 0; s < 15; s++) { System.Threading.Thread.Sleep(80); if (string.Equals(engine.ReadField(f), val, StringComparison.OrdinalIgnoreCase)) held++; }
+            Console.WriteLine($"  {name,-14}: held {held,2}/15 (len {fr.len}) NO re-write -> {(held >= 14 ? "INJECTION WORKS ✓" : "partial/fail")}");
+        }
+        finally { engine.Injector!.Restore(name); }
+    }
+    Console.WriteLine("\n[injecttest] all patches restored. Game code back to normal.");
+    return 0;
+}
+
+if (mode == "hifreq")
+{
+    using var engine = new TmlEngine();
+    engine.Attach();
+    IntPtr pb = IntPtr.Zero;
+    for (int i = 0; i < 60 && pb == IntPtr.Zero; i++) { pb = engine.PlayerBase(); if (pb == IntPtr.Zero) System.Threading.Thread.Sleep(500); }
+    if (pb == IntPtr.Zero) { Console.WriteLine("No world."); return 0; }
+    object gate = new();
+
+    string[] fields = { "pickSpeed", "wallSpeed", "tileSpeed", "moveSpeed", "maxRunSpeed", "endurance", "luck" };
+    foreach (var name in fields)
+    {
+        var f = engine.Model!.PlayerFields.FirstOrDefault(x => x.Name == name);
+        if (f == null) { Console.WriteLine($"  {name}: (not found)"); continue; }
+        bool boolean = f.Kind == TerrariaTrainer.Tml.FieldKind.Boolean;
+        string orig; lock (gate) orig = engine.ReadField(f);
+        string target = boolean ? "true"
+            : f.Kind is TerrariaTrainer.Tml.FieldKind.Single ? "10"
+            : (int.TryParse(orig, out var ov) ? ov + 5 : 5).ToString();
+
+        var stop = false;
+        var writer = new System.Threading.Thread(() => { TimeBeginPeriod(1); while (!System.Threading.Volatile.Read(ref stop)) { lock (gate) engine.WriteField(f, target); System.Threading.Thread.Sleep(2); } TimeEndPeriod(1); });
+        writer.IsBackground = true; writer.Start();
+
+        int held = 0;
+        for (int s = 0; s < 20; s++) { System.Threading.Thread.Sleep(50); string v; lock (gate) v = engine.ReadField(f); if (string.Equals(v, target, StringComparison.OrdinalIgnoreCase)) held++; }
+        System.Threading.Volatile.Write(ref stop, true); writer.Join();
+        lock (gate) engine.WriteField(f, orig);
+        Console.WriteLine($"  {name,-15}: held {held,2}/20 under 2ms writes -> {(held >= 18 ? "WORKS ✓" : held >= 8 ? "partial (flicker)" : "no (synchronous reset)")}");
+    }
+    return 0;
+}
+
 if (mode == "names")
 {
     ClrDiscovery.Names(proc.Id, new[] { 2, 5, 9, 3, 3499, 8124, 8218 });
+    return 0;
+}
+
+if (mode == "injectscan")
+{
+    ClrDiscovery.InjectScan(proc.Id, new[] { "findTreasure", "nightVision", "detectCreature",
+        "invis", "noFallDmg", "noKnockback", "fireWalk", "waterWalk", "spelunkerActive" });
+    return 0;
+}
+
+if (mode == "scanoff")
+{
+    ClrDiscovery.ScanFieldRefs(proc.Id, new[] { "pickSpeed", "moveSpeed", "maxRunSpeed", "tileSpeed", "wallSpeed" });
+    return 0;
+}
+
+if (mode == "scanall")
+{
+    ClrDiscovery.ScanAllRefs(proc.Id, args.Length > 1 ? args[1] : "pickSpeed");
     return 0;
 }
 
@@ -324,3 +411,6 @@ if (mode == "tmlwrite")
 
 Console.WriteLine("Unknown mode. Use: clr | scan | tml | tmlwrite");
 return 0;
+
+[DllImport("winmm.dll", EntryPoint = "timeBeginPeriod")] static extern uint TimeBeginPeriod(uint ms);
+[DllImport("winmm.dll", EntryPoint = "timeEndPeriod")] static extern uint TimeEndPeriod(uint ms);

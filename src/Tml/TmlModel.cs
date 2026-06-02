@@ -22,6 +22,7 @@ public sealed class TmlModel
     public ulong StaticItemNameCache; // &Lang._itemNameCache (LocalizedText[] ref)
     public ulong StaticPrefixNames;   // &Lang.prefix          (LocalizedText[] ref)
     public int LocalizedTextValueOff = 0x10; // LocalizedText._value (real offset)
+    public ulong ResetEffectsAddr;           // Player.ResetEffects JIT code (for NOP injection)
     public List<TmlField> PlayerFields = new();
     public Dictionary<string, int> ItemFields = new();
 

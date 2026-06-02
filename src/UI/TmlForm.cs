@@ -1,3 +1,5 @@
+using System.Runtime.InteropServices;
+using System.Threading;
 using TerrariaTrainer.Cheats;
 using TerrariaTrainer.Tml;
 
@@ -20,6 +22,14 @@ public sealed class TmlForm : Form
 
     private int _attachThrottle = 10; // attempt auto-attach on the first tick
     private TmlField? _fLife, _fLifeMax, _fMana, _fManaMax;
+
+    // High-frequency writer: per-frame-recomputed values (move/mine speed) must be written
+    // far faster than the 350ms UI tick to actually hold. ~2ms with 1ms timer resolution.
+    private Thread? _writer;
+    private volatile bool _writerRun = true;
+
+    [DllImport("winmm.dll")] private static extern uint timeBeginPeriod(uint ms);
+    [DllImport("winmm.dll")] private static extern uint timeEndPeriod(uint ms);
 
     private readonly TabControl _tabs = new() { Dock = DockStyle.Fill };
     private readonly DataGridView _grid = new();
@@ -47,6 +57,46 @@ public sealed class TmlForm : Form
         BuildLayout();
         BuildGrid();
         _timer.Start();
+
+        _writer = new Thread(WriterLoop) { IsBackground = true, Name = "freeze-writer" };
+        _writer.Start();
+    }
+
+    /// <summary>Continuously asserts active cheats at ~2ms so per-frame-recomputed values hold.</summary>
+    private void WriterLoop()
+    {
+        timeBeginPeriod(1);
+        try
+        {
+            while (_writerRun)
+            {
+                try
+                {
+                    if (_engine.Attached)
+                        lock (_engine.Sync) AssertActiveWrites();
+                }
+                catch { /* transient (process gone, list swap) */ }
+                Thread.Sleep(2);
+            }
+        }
+        finally { timeEndPeriod(1); }
+    }
+
+    private void AssertActiveWrites()
+    {
+        if (_engine.PlayerBase() == IntPtr.Zero) return;
+        var rows = _rows; // snapshot reference (rebuilds swap the field, never mutate in place)
+        foreach (var r in rows)
+        {
+            if (!r.Active) continue;
+            switch (r.Kind)
+            {
+                case RowKind.Value: if (r.FrozenText != null) _engine.WriteField(r.Field!, r.FrozenText); break;
+                case RowKind.Toggle: _engine.WriteField(r.Field!, "true"); break;
+                case RowKind.Inject: _engine.WriteField(r.Field!, r.InjectValue); break;
+                case RowKind.Fast: _engine.WriteField(r.Field!, r.InjectValue); break;
+            }
+        }
     }
 
     private void BuildLayout()
@@ -168,8 +218,11 @@ public sealed class TmlForm : Form
         string col = _invGrid.Columns[e.ColumnIndex].Name;
         if (col is not ("type" or "stack" or "prefix")) return;
         if (!int.TryParse(Convert.ToString(row.Cells[col].Value), out int val)) return;
-        if (_engine.SetItemInt(slot, col, val)) AppendLog($"Slot {slot}: {col} = {val}");
-        else AppendLog($"Slot {slot}: failed to set {col}");
+        lock (_engine.Sync)
+        {
+            if (_engine.SetItemInt(slot, col, val)) AppendLog($"Slot {slot}: {col} = {val}");
+            else AppendLog($"Slot {slot}: failed to set {col}");
+        }
     }
 
     private void RefreshInvGrid()
@@ -204,8 +257,11 @@ public sealed class TmlForm : Form
         {
             _btnAttach.Enabled = false;
             AppendLog("Attaching + ClrMD discovery (brief pause is normal)…");
-            _engine.Attach();
-            _rows = CheatTable.Build(_engine.Model!, _buffs.Buffs);
+            lock (_engine.Sync)
+            {
+                _engine.Attach();
+                _rows = CheatTable.Build(_engine.Model!, _buffs.Buffs, _engine.Injector);
+            }
             CacheVitalFields();
             RebuildGrid();
             _invGrid.Rows.Clear(); // rebuilt lazily for the new session
@@ -234,10 +290,13 @@ public sealed class TmlForm : Form
     {
         if (!_engine.Attached) return;
         // snapshot active state by description
-        var prev = _rows.Where(r => r.Kind is RowKind.Value or RowKind.Toggle)
+        var prev = _rows.Where(r => r.Kind is RowKind.Value or RowKind.Toggle or RowKind.Fast or RowKind.Inject)
             .ToDictionary(r => r.Desc, r => (r.Active, r.FrozenText));
-        if (!_engine.Rediscover()) return;
-        _rows = CheatTable.Build(_engine.Model!, _buffs.Buffs);
+        lock (_engine.Sync)
+        {
+            if (!_engine.Rediscover()) return;
+            _rows = CheatTable.Build(_engine.Model!, _buffs.Buffs, _engine.Injector);
+        }
         foreach (var r in _rows)
             if (prev.TryGetValue(r.Desc, out var s)) { r.Active = s.Active; r.FrozenText = s.FrozenText; }
         CacheVitalFields();
@@ -293,6 +352,8 @@ public sealed class TmlForm : Form
     {
         RowKind.Buff => "buff",
         RowKind.Toggle => "bool",
+        RowKind.Inject => "inject",
+        RowKind.Fast => "fast",
         RowKind.Action => "",
         RowKind.Value => r.Field!.Kind switch
         {
@@ -317,7 +378,7 @@ public sealed class TmlForm : Form
 
         r.Active = !r.Active;
         grow.Cells["active"].Value = r.Active;
-        ApplyActiveChange(r, grow);
+        lock (_engine.Sync) ApplyActiveChange(r, grow); // serialise with the writer thread
     }
 
     private void ApplyActiveChange(CheatRow r, DataGridViewRow grow)
@@ -337,13 +398,30 @@ public sealed class TmlForm : Form
                 if (!r.Active) _buffs.OnDisableBuff(_engine, r.Buff!);
                 AppendLog($"{(r.Active ? "Enabled" : "Disabled")} {r.Desc}");
                 break;
+            case RowKind.Inject:
+                if (r.Active)
+                {
+                    if (_engine.Injector!.Patch(r.Field!.Name)) { _engine.WriteField(r.Field!, r.InjectValue); AppendLog($"Injected (NOP reset) + enabled {r.Desc}"); }
+                    else { r.Active = false; grow.Cells["active"].Value = false; AppendLog($"Could not inject {r.Desc} (reset instruction not found)"); }
+                }
+                else
+                {
+                    _engine.Injector!.Restore(r.Field!.Name); // game's reset resumes, reverting the value
+                    AppendLog($"Restored (un-injected) {r.Desc}");
+                }
+                break;
+            case RowKind.Fast:
+                // writer thread asserts r.InjectValue while active; the game restores the
+                // value on its own when we stop writing.
+                AppendLog($"{(r.Active ? "Enabled" : "Disabled")} {r.Desc}");
+                break;
         }
     }
 
     private void DoAction(CheatRow r)
     {
         if (r.Desc.StartsWith("Max Stack"))
-            AppendLog($"Max-stacked {_engine.MaxStackInventory()} item(s).");
+            lock (_engine.Sync) AppendLog($"Max-stacked {_engine.MaxStackInventory()} item(s).");
     }
 
     private void Grid_CellDoubleClick(object? sender, DataGridViewCellEventArgs e)
@@ -363,19 +441,24 @@ public sealed class TmlForm : Form
         if (grow.Tag is not CheatRow r || r.Kind != RowKind.Value) return;
         if (_grid.Columns[e.ColumnIndex].Name != "value") return;
         var text = Convert.ToString(grow.Cells["value"].Value) ?? "";
-        if (_engine.WriteField(r.Field!, text)) AppendLog($"Set {r.Desc} = {text}");
-        else AppendLog($"Failed to write {r.Desc}");
+        lock (_engine.Sync)
+        {
+            if (_engine.WriteField(r.Field!, text)) AppendLog($"Set {r.Desc} = {text}");
+            else AppendLog($"Failed to write {r.Desc}");
+        }
         if (r.Active) r.FrozenText = text; // keep freezing the new value
     }
 
     private void DisableAll()
     {
+        lock (_engine.Sync)
         foreach (var r in _rows)
         {
             if (r.Kind == RowKind.GroupHeader || !r.Active) continue;
             r.Active = false;
             if (r.Kind == RowKind.Buff) { r.Buff!.Enabled = false; _buffs.OnDisableBuff(_engine, r.Buff!); }
             else if (r.Kind == RowKind.Value) r.FrozenText = null;
+            else if (r.Kind == RowKind.Inject) { _engine.Injector?.Restore(r.Field!.Name); }
         }
         foreach (DataGridViewRow gr in _grid.Rows)
             if (gr.Tag is CheatRow rr && rr.Kind != RowKind.GroupHeader)
@@ -402,42 +485,36 @@ public sealed class TmlForm : Form
             }
             return;
         }
-        var pb = _engine.PlayerBase();
-        if (pb == IntPtr.Zero) { _vitals.Text = "(load into a world)"; return; }
-        _vitals.Text = VitalsText();
-
-        _buffs.Tick(_engine); // assert enabled buffs
-
-        // Only the visible tab needs live display refreshes; active cheats (freeze/toggle)
-        // are still asserted regardless of which tab is shown.
-        bool cheatsVisible = _tabs.SelectedIndex == 0;
-        var editing = _grid.IsCurrentCellInEditMode ? _grid.CurrentCell : null;
-        foreach (DataGridViewRow gr in _grid.Rows)
+        // Writes are handled by the high-frequency writer thread; here we only display.
+        // Lock so we don't share the engine's scratch buffer with that thread.
+        lock (_engine.Sync)
         {
-            if (gr.Tag is not CheatRow r || r.Kind == RowKind.GroupHeader || r.Kind == RowKind.Action) continue;
-            var cell = gr.Cells["value"];
-            switch (r.Kind)
+            if (_engine.PlayerBase() == IntPtr.Zero) { _vitals.Text = "(load into a world)"; return; }
+            _vitals.Text = VitalsText();
+            _buffs.Tick(_engine); // buffs persist ~1h, slow tick is fine
+
+            if (_tabs.SelectedIndex == 1) { RefreshInvGrid(); return; }
+            if (_tabs.SelectedIndex != 0) return;
+
+            var editing = _grid.IsCurrentCellInEditMode ? _grid.CurrentCell : null;
+            foreach (DataGridViewRow gr in _grid.Rows)
             {
-                case RowKind.Value:
+                if (gr.Tag is not CheatRow r || r.Kind is RowKind.GroupHeader or RowKind.Action) continue;
+                var cell = gr.Cells["value"];
+                if (r.Kind == RowKind.Value)
+                {
                     if (r.Active && r.FrozenText != null)
                     {
-                        _engine.WriteField(r.Field!, r.FrozenText);
-                        if (cheatsVisible && !ReferenceEquals(cell, editing)) cell.Value = r.FrozenText;
+                        if (!ReferenceEquals(cell, editing)) cell.Value = r.FrozenText;
                     }
-                    else if (cheatsVisible && !ReferenceEquals(cell, editing))
-                        cell.Value = _engine.ReadField(r.Field!);
-                    break;
-                case RowKind.Toggle:
-                    if (r.Active) _engine.WriteField(r.Field!, "true");
-                    if (cheatsVisible) cell.Value = _engine.ReadField(r.Field!) == "True" ? "ON" : "off";
-                    break;
-                case RowKind.Buff:
-                    if (cheatsVisible) cell.Value = r.Active ? "ON" : "off";
-                    break;
+                    else if (!ReferenceEquals(cell, editing)) cell.Value = _engine.ReadField(r.Field!);
+                }
+                else // Toggle / Inject / Fast / Buff
+                {
+                    cell.Value = r.Active ? "ON" : "off";
+                }
             }
         }
-
-        if (_tabs.SelectedIndex == 1) RefreshInvGrid();
     }
 
     private string VitalsText()
@@ -456,7 +533,9 @@ public sealed class TmlForm : Form
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
         _timer.Stop();
-        _engine.Dispose();
+        _writerRun = false;
+        _writer?.Join(200);
+        lock (_engine.Sync) _engine.Dispose(); // restores any injected patches
         base.OnFormClosed(e);
     }
 }

@@ -13,8 +13,12 @@ public sealed class TmlEngine : IDisposable
     public ProcessMemory? Mem { get; private set; }
     public TmlModel? Model { get; private set; }
     public Process? Proc { get; private set; }
+    public CodeInjector? Injector { get; private set; }
 
     public bool Attached => Mem is { IsAttached: true } && Mem.IsAlive() && Model != null;
+
+    /// <summary>Serialises memory access between the UI thread and the high-frequency freeze writer.</summary>
+    public readonly object Sync = new();
 
     public event Action<string>? Log;
 
@@ -27,7 +31,14 @@ public sealed class TmlEngine : IDisposable
     public bool Rediscover()
     {
         if (Proc == null) return false;
-        try { Model = TmlDiscovery.Discover(Proc.Id); _playerStamp = 0; _itemNameCache.Clear(); _prefixNameCache.Clear(); return true; }
+        try
+        {
+            Injector?.RestoreAll();
+            Model = TmlDiscovery.Discover(Proc.Id);
+            if (Mem != null) Injector = new CodeInjector(Mem, Model, Proc);
+            _playerStamp = 0; _itemNameCache.Clear(); _prefixNameCache.Clear();
+            return true;
+        }
         catch (Exception ex) { Log?.Invoke("Re-scan failed: " + ex.Message); return false; }
     }
 
@@ -45,6 +56,8 @@ public sealed class TmlEngine : IDisposable
         Log?.Invoke($"  Player fields: {Model.PlayerFields.Count}, item fields: {Model.ItemFields.Count}");
 
         Mem = ProcessMemory.Attach(proc);
+        Injector = new CodeInjector(Mem, Model, proc);
+        if (Model.ResetEffectsAddr != 0) Log?.Invoke($"  ResetEffects @ 0x{Model.ResetEffectsAddr:X} (injection ready)");
         var pb = PlayerBase();
         if (pb == IntPtr.Zero) Log?.Invoke("WARNING: player not resolved yet (load into a world).");
         else Log?.Invoke($"Player @ 0x{pb.ToInt64():X}");
@@ -272,6 +285,8 @@ public sealed class TmlEngine : IDisposable
 
     public void Detach()
     {
+        try { Injector?.RestoreAll(); } catch { /* process may be gone */ }
+        Injector = null;
         Mem?.Dispose();
         Mem = null;
         Model = null;

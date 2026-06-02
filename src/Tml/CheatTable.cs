@@ -4,7 +4,7 @@ using TerrariaTrainer.Cheats;
 
 namespace TerrariaTrainer.Tml;
 
-public enum RowKind { GroupHeader, Value, Toggle, Buff, Action }
+public enum RowKind { GroupHeader, Value, Toggle, Buff, Action, Inject, Fast }
 
 /// <summary>A single row in the Cheat-Engine-style table.</summary>
 public sealed class CheatRow
@@ -16,6 +16,7 @@ public sealed class CheatRow
     public BuffCheat? Buff;      // for Buff
     public bool Active;          // freeze (Value) / hold-true (Toggle) / enable (Buff)
     public string? FrozenText;   // value to assert while Active (Value rows)
+    public string InjectValue = "true"; // value written for Inject rows (e.g. "0.2" for pickSpeed)
 }
 
 internal sealed class TableEntryDto
@@ -24,6 +25,7 @@ internal sealed class TableEntryDto
     [JsonPropertyName("desc")] public string Desc { get; set; } = "";
     [JsonPropertyName("field")] public string Field { get; set; } = "";
     [JsonPropertyName("kind")] public string Kind { get; set; } = "value";
+    [JsonPropertyName("value")] public string? Value { get; set; }
 }
 
 /// <summary>
@@ -32,26 +34,32 @@ internal sealed class TableEntryDto
 /// </summary>
 public static class CheatTable
 {
-    public static List<CheatRow> Build(TmlModel model, IReadOnlyList<BuffCheat> buffs)
+    public static List<CheatRow> Build(TmlModel model, IReadOnlyList<BuffCheat> buffs, CodeInjector? injector = null)
     {
         var rows = new List<CheatRow>();
         var byName = model.PlayerFields
             .GroupBy(f => f.Name).ToDictionary(g => g.Key, g => g.First());
 
-        // ---- curated value/toggle entries ----
+        // ---- curated value/toggle/inject entries ----
         var dtos = LoadEntries();
         string? lastGroup = null;
         foreach (var d in dtos)
         {
             if (!byName.TryGetValue(d.Field, out var field)) continue; // field absent -> skip
-            EmitGroup(rows, ref lastGroup, d.Group);
-            rows.Add(new CheatRow
+
+            RowKind kind;
+            if (d.Kind.Equals("inject", StringComparison.OrdinalIgnoreCase))
             {
-                Kind = d.Kind.Equals("toggle", StringComparison.OrdinalIgnoreCase) ? RowKind.Toggle : RowKind.Value,
-                Group = d.Group,
-                Desc = d.Desc,
-                Field = field,
-            });
+                // only offer it if we can actually locate the reset to NOP
+                if (injector == null || !injector.CanInject(d.Field)) continue;
+                kind = RowKind.Inject;
+            }
+            else if (d.Kind.Equals("toggle", StringComparison.OrdinalIgnoreCase)) kind = RowKind.Toggle;
+            else if (d.Kind.Equals("fast", StringComparison.OrdinalIgnoreCase)) kind = RowKind.Fast;
+            else kind = RowKind.Value;
+
+            EmitGroup(rows, ref lastGroup, d.Group);
+            rows.Add(new CheatRow { Kind = kind, Group = d.Group, Desc = d.Desc, Field = field, InjectValue = d.Value ?? "true" });
         }
 
         // ---- inventory action ----

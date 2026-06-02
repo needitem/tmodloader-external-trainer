@@ -109,6 +109,16 @@ public static class TmlDiscovery
             }
         }
 
+        // Player.ResetEffects JIT address (target for NOP-the-reset code injection).
+        foreach (var method in playerType.Methods)
+        {
+            if (method.Name == "ResetEffects" && method.NativeCode != 0)
+            {
+                model.ResetEffectsAddr = method.NativeCode;
+                break;
+            }
+        }
+
         // Item/prefix name tables (Terraria.Lang) — gives localized names incl. modded items.
         var langType = FindType(runtime, "Terraria.Lang");
         var ltType = FindType(runtime, "Terraria.Localization.LocalizedText");

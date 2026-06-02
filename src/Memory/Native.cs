@@ -89,5 +89,21 @@ public static class Native
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool IsWow64Process(IntPtr hProcess, out bool wow64Process);
 
+    // ---- thread control (for safe code patching) ----
+    public const uint THREAD_SUSPEND_RESUME = 0x0002;
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern IntPtr OpenThread(uint dwDesiredAccess, bool bInheritHandle, int dwThreadId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern uint SuspendThread(IntPtr hThread);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern int ResumeThread(IntPtr hThread);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool FlushInstructionCache(IntPtr hProcess, IntPtr lpBaseAddress, IntPtr dwSize);
+
     public const uint MEM_RELEASE = 0x8000;
 }
