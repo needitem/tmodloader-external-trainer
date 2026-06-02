@@ -59,14 +59,18 @@ public static class CheatTable
         rows.Add(new CheatRow { Kind = RowKind.Action, Group = "🎒 Inventory", Desc = "Max Stack All Items (click)" });
 
         // ---- buff toggles ----
-        EmitGroup(rows, ref lastGroup, "🔮 Buffs (freeze to keep active)");
+        // Effects like speed/defense/vision/mining are delivered as buffs because the
+        // game recomputes the raw Player fields every frame (external freezes can't hold
+        // them); the in-game buff IS the reliable mechanism and the game applies it.
+        const string buffGroup = "🔮 Buffs — speed · defense · vision · mining · immunity (tick On to keep)";
+        EmitGroup(rows, ref lastGroup, buffGroup);
         foreach (var b in buffs)
         {
             if (b.Mode == "maxstack") continue; // surfaced as the action row above
             rows.Add(new CheatRow
             {
                 Kind = RowKind.Buff,
-                Group = "🔮 Buffs (freeze to keep active)",
+                Group = buffGroup,
                 Desc = b.Name,
                 Buff = b,
             });

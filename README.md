@@ -60,15 +60,35 @@ dotnet run        # launches the tModLoader trainer (TmlForm)
 Run **as Administrator** (needed for `OpenProcess` + ClrMD snapshot).
 Output: `src/bin/Debug/net9.0-windows/TerrariaTrainer.exe`.
 
+## What works externally (and what doesn't)
+
+Terraria recomputes most `Player` fields **every frame** (move speed, defense, luck,
+vision/effect flags, etc.) inside `ResetEffects()`. An out-of-process trainer writes at
+~3 Hz, so the game overwrites those before they're used — freezing them has **no effect**
+(verified live: e.g. `nightVision` reverts ~every frame). This is exactly why the original
+Cheat Engine table used **assembly injection** for those effects.
+
+So this trainer only exposes what genuinely works from outside:
+
+| Want | Use |
+|------|-----|
+| Infinite HP / Mana | **Vitals**: freeze Life / Mana (these are persistent state) |
+| Speed, defense, vision, mining, immunity, … | **Buffs** (Swiftness, Ironskin, Night Owl, Spelunker, Hunter, Invisibility, Mining, Obsidian Skin, …) — the game applies these every frame, so they're reliable |
+| Items / stacks / prefixes | **Inventory** tab |
+
+Buffs are the right tool for per-frame effects: ticking a buff writes it into the player's
+buff array (verified: applies with ~1 h duration) and the game renders the effect itself.
+
 ## Usage (Cheat-Engine-style table)
 
 1. Launch tModLoader and **load into a world**.
 2. Trainer → **Attach** (a brief snapshot pause is normal while ClrMD runs).
 3. The window is one grouped cheat table — **On / Description / Type / Value**:
-   - **Value rows** (Life, Mana, Move Speed, …): double-click **Value** to edit;
-     tick **On** to *freeze* it.
-   - **Toggle rows** (God Mode, No Fall Damage, Spelunker, …): tick **On** to hold it.
-   - **Buff rows** (Ironskin, Swiftness, …): tick **On** to keep the buff applied.
+   - **Vitals** (Life, Mana): double-click **Value** to edit; tick **On** to *freeze*
+     (infinite HP / mana).
+   - **Buff rows** (Swiftness, Ironskin, Night Owl, Spelunker, Hunter, Invisibility, …):
+     tick **On** to keep the buff applied — this is how you get speed / defense / vision /
+     mining / immunity (see the table above).
    - **Max Stack All Items**: tick **On** to run once.
 4. **Find** box filters; **Disable All** clears everything.
 5. **Inventory tab**: per-slot editor (Type / Stack / MaxStack / Prefix). Double-click a

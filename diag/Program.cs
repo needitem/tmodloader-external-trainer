@@ -77,6 +77,94 @@ if (mode == "tml")
     return 0;
 }
 
+if (mode == "bufftest")
+{
+    using var engine = new TmlEngine();
+    engine.Attach();
+    IntPtr pb = IntPtr.Zero;
+    for (int i = 0; i < 60 && pb == IntPtr.Zero; i++) { pb = engine.PlayerBase(); if (pb == IntPtr.Zero) System.Threading.Thread.Sleep(500); }
+    if (pb == IntPtr.Zero) { Console.WriteLine("No world."); return 0; }
+
+    var buffs = new TerrariaTrainer.Tml.TmlBuffs();
+    string[] want = { "Night Owl", "Spelunker", "Hunter", "Invisibility" };
+    var picked = buffs.Buffs.Where(b => want.Any(w => b.Name.Contains(w))).ToList();
+    foreach (var b in picked) { b.Enabled = true; Console.WriteLine($"enabling: {b.Name} (buff {b.Buff})"); }
+
+    for (int t = 0; t < 5; t++) { buffs.Tick(engine); System.Threading.Thread.Sleep(100); }
+
+    var (id, tm, len) = engine.BuffArrays();
+    var m = engine.Mem!;
+    var present = new List<int>();
+    for (int i = 0; i < len; i++) { int v = m.ReadInt32(engine.BuffSlot(id, i)); if (v != 0) present.Add(v); }
+    Console.WriteLine($"\nactive buff IDs in array: {string.Join(", ", present)}");
+    foreach (var b in picked)
+        Console.WriteLine($"  {b.Name,-40}: {(present.Contains(b.Buff) ? "APPLIED ✓ (time=" + m.ReadInt32(engine.BuffSlot(tm, present.IndexOf(b.Buff))) + ")" : "MISSING")}");
+
+    foreach (var b in picked) { b.Enabled = false; buffs.OnDisableBuff(engine, b); }
+    Console.WriteLine("\n[bufftest] buffs removed (restored).");
+    return 0;
+}
+
+if (mode == "persist")
+{
+    using var engine = new TmlEngine();
+    engine.Attach();
+    IntPtr pb = IntPtr.Zero;
+    for (int i = 0; i < 60 && pb == IntPtr.Zero; i++) { pb = engine.PlayerBase(); if (pb == IntPtr.Zero) System.Threading.Thread.Sleep(500); }
+    if (pb == IntPtr.Zero) { Console.WriteLine("No world."); return 0; }
+
+    // Does writing a value once survive (freezable) or get recomputed each frame?
+    string[] fields = { "statLife", "statMana", "statLifeMax", "statLifeMax2", "statManaMax",
+        "moveSpeed", "maxRunSpeed", "pickSpeed", "statDefense", "endurance", "maxMinions",
+        "aggro", "luck", "extraAccessory", "fishingSkill" };
+    foreach (var name in fields)
+    {
+        var f = engine.Model!.PlayerFields.FirstOrDefault(x => x.Name == name);
+        if (f == null) { Console.WriteLine($"  {name,-15}: (not found)"); continue; }
+        string orig = engine.ReadField(f);
+        // small, in-range delta to avoid clamping false-negatives
+        string test;
+        if (f.Kind is TerrariaTrainer.Tml.FieldKind.Single or TerrariaTrainer.Tml.FieldKind.Double)
+            test = (double.Parse(orig, System.Globalization.CultureInfo.InvariantCulture) + 1.0).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        else { int ov = int.TryParse(orig, out var x) ? x : 0; test = (ov > 0 ? ov - 1 : ov + 1).ToString(); }
+        engine.WriteField(f, test);
+        int held = 0, reverted = 0;
+        for (int s = 0; s < 15; s++) { var v = engine.ReadField(f); if (v == test) held++; else if (v == orig) reverted++; System.Threading.Thread.Sleep(50); }
+        engine.WriteField(f, orig); // restore
+        string verdict = held >= 13 ? "FREEZABLE ✓" : reverted >= 10 ? "recomputed→orig (needs buff/injection)" : "flickers/clamped";
+        Console.WriteLine($"  {name,-15}: held {held,2}/15 reverted {reverted,2}/15  -> {verdict}");
+    }
+    return 0;
+}
+
+if (mode == "effect")
+{
+    using var engine = new TmlEngine();
+    engine.Log += Console.WriteLine;
+    engine.Attach();
+    IntPtr pb = IntPtr.Zero;
+    for (int i = 0; i < 60 && pb == IntPtr.Zero; i++) { pb = engine.PlayerBase(); if (pb == IntPtr.Zero) System.Threading.Thread.Sleep(500); }
+    if (pb == IntPtr.Zero) { Console.WriteLine("No world."); return 0; }
+
+    string[] fields = { "findTreasure", "nightVision", "detectCreature", "invis", "fireWalk", "noFallDmg", "noKnockback" };
+    foreach (var name in fields)
+    {
+        var f = engine.Model!.PlayerFields.FirstOrDefault(x => x.Name == name);
+        if (f == null) { Console.WriteLine($"{name}: (field not found)"); continue; }
+        // write true, then sample 20x over ~1s how often it's still true
+        engine.WriteField(f, "true");
+        int trueCount = 0;
+        for (int s = 0; s < 20; s++)
+        {
+            if (engine.ReadField(f) == "True") trueCount++;
+            System.Threading.Thread.Sleep(50);
+        }
+        Console.WriteLine($"  {name,-15}: stayed true {trueCount}/20 samples after write  -> {(trueCount >= 18 ? "STICKS" : trueCount == 0 ? "RESET every frame" : "flickers")}");
+    }
+    Console.WriteLine("\n[effect] If a flag resets every frame, 350ms polling can't hold it; use the equivalent BUFF instead.");
+    return 0;
+}
+
 if (mode == "dbg")
 {
     // dbg [pid] — discover + dump player resolution internals for a specific process.
