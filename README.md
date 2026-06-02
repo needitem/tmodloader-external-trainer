@@ -26,10 +26,12 @@ An **external** (out-of-process) trainer for **tModLoader** (Terraria 1.4.4, 64-
 
 ### Why ClrMD instead of the original CT?
 
-The bundled `Terraria 1.4.5.5 Table Ver 2.CT` targets **vanilla 32-bit** Terraria.
-The user's game is **tModLoader 64-bit** (`dotnet.exe` hosting `tModLoader.dll`), which
-has 8-byte pointers and a different field layout — the CT's 32-bit hook + offsets don't
-apply. Instead of reverse-engineering by hand, we read the .NET metadata directly with
+This project started from a Cheat Engine table (`Terraria 1.4.5.5 Table Ver 2.CT`, not
+redistributed here) that targets **vanilla 32-bit** Terraria. The actual game is
+**tModLoader 64-bit** (`dotnet.exe` hosting `tModLoader.dll`), which has 8-byte pointers
+and a different field layout — the CT's 32-bit hook + offsets don't apply. The cheat
+list distilled from it lives in `Data/*.json` (already generated). Instead of
+reverse-engineering by hand, we read the .NET metadata directly with
 `Microsoft.Diagnostics.Runtime` (ClrMD): static `Main.myPlayer`/`Main.player` addresses
 and every `Player` field offset, **by name**, fresh each session.
 
@@ -144,6 +146,9 @@ asm → `jmp` back. To port externally:
 This layer must be validated against a live game and is not yet wired up.
 
 ## Regenerating data from the CT
+
+The generated `Data/*.json` are committed, so this is only needed to rebuild from a
+different table. Place the `.CT` file at the repo root first (it is not redistributed here).
 
 ```powershell
 python tools/gen_data.py     # values.json, scripts.json
