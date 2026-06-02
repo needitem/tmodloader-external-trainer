@@ -27,7 +27,7 @@ public sealed class TmlEngine : IDisposable
     public bool Rediscover()
     {
         if (Proc == null) return false;
-        try { Model = TmlDiscovery.Discover(Proc.Id); _playerStamp = long.MinValue; return true; }
+        try { Model = TmlDiscovery.Discover(Proc.Id); _playerStamp = 0; return true; }
         catch (Exception ex) { Log?.Invoke("Re-scan failed: " + ex.Message); return false; }
     }
 
@@ -53,7 +53,8 @@ public sealed class TmlEngine : IDisposable
     // The player pointer is resolved (3 reads) at most once per ~40 ms and cached, so a
     // full grid refresh (100+ field reads in one tick) pays the resolution cost only once.
     private IntPtr _player;
-    private long _playerStamp = long.MinValue;
+    // 0 = no cached value yet. (Avoid long.MinValue: `now - long.MinValue` overflows.)
+    private long _playerStamp;
     private const long PlayerTtlMs = 40;
 
     /// <summary>
@@ -64,9 +65,9 @@ public sealed class TmlEngine : IDisposable
     public IntPtr PlayerBase()
     {
         long now = Environment.TickCount64;
-        if (now - _playerStamp <= PlayerTtlMs) return _player;
+        if (_playerStamp != 0 && now - _playerStamp <= PlayerTtlMs) return _player;
         _player = ResolvePlayer();
-        _playerStamp = now;
+        _playerStamp = now == 0 ? 1 : now; // never store the 0 sentinel
         return _player;
     }
 
@@ -233,7 +234,7 @@ public sealed class TmlEngine : IDisposable
         Mem = null;
         Model = null;
         Proc = null;
-        _playerStamp = long.MinValue;
+        _playerStamp = 0;
     }
 
     public void Dispose() => Detach();
