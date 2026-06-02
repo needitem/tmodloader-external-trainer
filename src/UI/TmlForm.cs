@@ -402,6 +402,9 @@ public sealed class TmlForm : Form
 
         _buffs.Tick(_engine); // assert enabled buffs
 
+        // Only the visible tab needs live display refreshes; active cheats (freeze/toggle)
+        // are still asserted regardless of which tab is shown.
+        bool cheatsVisible = _tabs.SelectedIndex == 0;
         var editing = _grid.IsCurrentCellInEditMode ? _grid.CurrentCell : null;
         foreach (DataGridViewRow gr in _grid.Rows)
         {
@@ -413,17 +416,17 @@ public sealed class TmlForm : Form
                     if (r.Active && r.FrozenText != null)
                     {
                         _engine.WriteField(r.Field!, r.FrozenText);
-                        if (!ReferenceEquals(cell, editing)) cell.Value = r.FrozenText;
+                        if (cheatsVisible && !ReferenceEquals(cell, editing)) cell.Value = r.FrozenText;
                     }
-                    else if (!ReferenceEquals(cell, editing))
+                    else if (cheatsVisible && !ReferenceEquals(cell, editing))
                         cell.Value = _engine.ReadField(r.Field!);
                     break;
                 case RowKind.Toggle:
                     if (r.Active) _engine.WriteField(r.Field!, "true");
-                    cell.Value = _engine.ReadField(r.Field!) == "True" ? "ON" : "off";
+                    if (cheatsVisible) cell.Value = _engine.ReadField(r.Field!) == "True" ? "ON" : "off";
                     break;
                 case RowKind.Buff:
-                    cell.Value = r.Active ? "ON" : "off";
+                    if (cheatsVisible) cell.Value = r.Active ? "ON" : "off";
                     break;
             }
         }

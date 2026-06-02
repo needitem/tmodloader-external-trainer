@@ -80,8 +80,15 @@ public sealed class ProcessMemory : IDisposable
 
     public bool WriteBytes(IntPtr address, byte[] buffer)
     {
-        // Ensure the page is writable; restore protection afterwards.
-        VirtualProtectEx(_handle, address, (IntPtr)buffer.Length, MemoryProtection.ExecuteReadWrite, out var old);
+        // Fast path: most .NET object fields live on read/write heap pages, so the
+        // write succeeds directly — no VirtualProtectEx round-trip needed.
+        if (WriteProcessMemory(_handle, address, buffer, buffer.Length, out var w)
+            && w.ToInt64() == buffer.Length)
+            return true;
+
+        // Slow path: page wasn't writable — temporarily flip protection.
+        if (!VirtualProtectEx(_handle, address, (IntPtr)buffer.Length, MemoryProtection.ExecuteReadWrite, out var old))
+            return false;
         bool ok = WriteProcessMemory(_handle, address, buffer, buffer.Length, out var written)
                   && written.ToInt64() == buffer.Length;
         VirtualProtectEx(_handle, address, (IntPtr)buffer.Length, old, out _);
@@ -89,21 +96,30 @@ public sealed class ProcessMemory : IDisposable
     }
 
     // ---- typed ----
+    // Scalar reads share a small scratch buffer to avoid a byte[] allocation per read
+    // (the trainer is single-threaded; reads consume the buffer immediately).
 
-    public int ReadInt32(IntPtr address) => BitConverter.ToInt32(ReadBytes(address, 4));
-    public uint ReadUInt32(IntPtr address) => BitConverter.ToUInt32(ReadBytes(address, 4));
-    public short ReadInt16(IntPtr address) => BitConverter.ToInt16(ReadBytes(address, 2));
-    public byte ReadByte(IntPtr address) => ReadBytes(address, 1)[0];
-    public float ReadFloat(IntPtr address) => BitConverter.ToSingle(ReadBytes(address, 4));
-    public double ReadDouble(IntPtr address) => BitConverter.ToDouble(ReadBytes(address, 8));
+    private readonly byte[] _scratch = new byte[8];
+
+    private byte[] ReadScalar(IntPtr address, int n)
+    {
+        ReadProcessMemory(_handle, address, _scratch, n, out _);
+        return _scratch;
+    }
+
+    public int ReadInt32(IntPtr address) => BitConverter.ToInt32(ReadScalar(address, 4), 0);
+    public uint ReadUInt32(IntPtr address) => BitConverter.ToUInt32(ReadScalar(address, 4), 0);
+    public short ReadInt16(IntPtr address) => BitConverter.ToInt16(ReadScalar(address, 2), 0);
+    public byte ReadByte(IntPtr address) => ReadScalar(address, 1)[0];
+    public float ReadFloat(IntPtr address) => BitConverter.ToSingle(ReadScalar(address, 4), 0);
+    public double ReadDouble(IntPtr address) => BitConverter.ToDouble(ReadScalar(address, 8), 0);
+    public long ReadInt64(IntPtr address) => BitConverter.ToInt64(ReadScalar(address, 8), 0);
 
     /// <summary>Read a 32-bit pointer value (vanilla 32-bit target).</summary>
     public IntPtr ReadPtr(IntPtr address) => (IntPtr)ReadUInt32(address);
 
-    public long ReadInt64(IntPtr address) => BitConverter.ToInt64(ReadBytes(address, 8));
-
     /// <summary>Read a 64-bit pointer value (tModLoader / .NET Core target).</summary>
-    public IntPtr ReadPtr64(IntPtr address) => (IntPtr)BitConverter.ToInt64(ReadBytes(address, 8));
+    public IntPtr ReadPtr64(IntPtr address) => (IntPtr)ReadInt64(address);
 
     public bool WriteInt32(IntPtr address, int value) => WriteBytes(address, BitConverter.GetBytes(value));
     public bool WriteUInt32(IntPtr address, uint value) => WriteBytes(address, BitConverter.GetBytes(value));

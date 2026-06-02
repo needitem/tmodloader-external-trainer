@@ -27,7 +27,7 @@ public sealed class TmlEngine : IDisposable
     public bool Rediscover()
     {
         if (Proc == null) return false;
-        try { Model = TmlDiscovery.Discover(Proc.Id); return true; }
+        try { Model = TmlDiscovery.Discover(Proc.Id); _playerStamp = long.MinValue; return true; }
         catch (Exception ex) { Log?.Invoke("Re-scan failed: " + ex.Message); return false; }
     }
 
@@ -50,8 +50,27 @@ public sealed class TmlEngine : IDisposable
         else Log?.Invoke($"Player @ 0x{pb.ToInt64():X}");
     }
 
-    /// <summary>Resolve the live local player object address.</summary>
+    // The player pointer is resolved (3 reads) at most once per ~40 ms and cached, so a
+    // full grid refresh (100+ field reads in one tick) pays the resolution cost only once.
+    private IntPtr _player;
+    private long _playerStamp = long.MinValue;
+    private const long PlayerTtlMs = 40;
+
+    /// <summary>
+    /// Live local player object address, cached with a short TTL. Reads/writes in the
+    /// same UI tick reuse it; the next tick (≥350 ms) re-resolves, so a GC move or world
+    /// reload is picked up automatically.
+    /// </summary>
     public IntPtr PlayerBase()
+    {
+        long now = Environment.TickCount64;
+        if (now - _playerStamp <= PlayerTtlMs) return _player;
+        _player = ResolvePlayer();
+        _playerStamp = now;
+        return _player;
+    }
+
+    private IntPtr ResolvePlayer()
     {
         if (Mem == null || Model == null) return IntPtr.Zero;
         try
@@ -60,8 +79,7 @@ public sealed class TmlEngine : IDisposable
             if (idx < 0 || idx > 255) return IntPtr.Zero;
             IntPtr arr = Mem.ReadPtr64((IntPtr)Model.StaticPlayerArray);
             if (arr == IntPtr.Zero) return IntPtr.Zero;
-            IntPtr player = Mem.ReadPtr64((IntPtr)(arr.ToInt64() + ArrayData + idx * 8));
-            return player;
+            return Mem.ReadPtr64((IntPtr)(arr.ToInt64() + ArrayData + idx * 8));
         }
         catch { return IntPtr.Zero; }
     }
@@ -215,6 +233,7 @@ public sealed class TmlEngine : IDisposable
         Mem = null;
         Model = null;
         Proc = null;
+        _playerStamp = long.MinValue;
     }
 
     public void Dispose() => Detach();
