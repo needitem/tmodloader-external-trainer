@@ -19,6 +19,9 @@ public sealed class TmlModel
 {
     public ulong StaticMyPlayer;     // &Main.myPlayer  (int)
     public ulong StaticPlayerArray;  // &Main.player    (Player[] ref)
+    public ulong StaticItemNameCache; // &Lang._itemNameCache (LocalizedText[] ref)
+    public ulong StaticPrefixNames;   // &Lang.prefix          (LocalizedText[] ref)
+    public int LocalizedTextValueOff = 0x10; // LocalizedText._value (real offset)
     public List<TmlField> PlayerFields = new();
     public Dictionary<string, int> ItemFields = new();
 

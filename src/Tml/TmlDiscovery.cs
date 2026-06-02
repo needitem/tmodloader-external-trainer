@@ -109,6 +109,31 @@ public static class TmlDiscovery
             }
         }
 
+        // Item/prefix name tables (Terraria.Lang) — gives localized names incl. modded items.
+        var langType = FindType(runtime, "Terraria.Lang");
+        var ltType = FindType(runtime, "Terraria.Localization.LocalizedText");
+        if (ltType != null)
+        {
+            var vf = ltType.GetFieldByName("_value");
+            if (vf != null) model.LocalizedTextValueOff = vf.Offset + HeaderSize;
+        }
+        if (langType != null)
+        {
+            var fItemNames = langType.GetStaticFieldByName("_itemNameCache");
+            var fPrefix = langType.GetStaticFieldByName("prefix");
+            foreach (var domain in runtime.AppDomains)
+            {
+                try
+                {
+                    if (fItemNames != null && model.StaticItemNameCache == 0)
+                    { ulong a = fItemNames.GetAddress(domain); if (a != 0) model.StaticItemNameCache = a; }
+                    if (fPrefix != null && model.StaticPrefixNames == 0)
+                    { ulong a = fPrefix.GetAddress(domain); if (a != 0) model.StaticPrefixNames = a; }
+                }
+                catch { /* try next domain */ }
+            }
+        }
+
         return model;
     }
 

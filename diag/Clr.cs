@@ -79,6 +79,57 @@ internal static class ClrDiscovery
             Console.WriteLine($"  +0x{f.Offset:X3}  {Trunc(f.Type?.Name ?? "?", 34),-34} {f.Name}");
     }
 
+    public static void Names(int pid, int[] types)
+    {
+        using var dt = DataTarget.CreateSnapshotAndAttach(pid);
+        using var runtime = dt.ClrVersions.First().CreateRuntime();
+        var lang = FindType(runtime, "Terraria.Lang");
+        if (lang == null) { Console.WriteLine("Terraria.Lang not found"); return; }
+        Console.WriteLine("Lang static fields:");
+        foreach (var sf in lang.StaticFields)
+            Console.WriteLine($"  {sf.Type?.Name,-45} {sf.Name}");
+
+        // Look for an item-name cache (LocalizedText[]).
+        var cacheField = lang.StaticFields.FirstOrDefault(f =>
+            f.Name.Contains("item", StringComparison.OrdinalIgnoreCase) &&
+            (f.Type?.Name?.Contains("LocalizedText") ?? false) && (f.Type?.IsArray ?? false));
+        if (cacheField == null)
+        {
+            cacheField = lang.StaticFields.FirstOrDefault(f => f.Type?.Name?.Contains("LocalizedText") == true && (f.Type?.IsArray ?? false));
+        }
+        Console.WriteLine($"\nchosen cache field: {cacheField?.Name ?? "(none)"}  type={cacheField?.Type?.Name}");
+        if (cacheField == null) return;
+
+        var ltType = FindType(runtime, "Terraria.Localization.LocalizedText");
+        Console.WriteLine("LocalizedText fields:");
+        if (ltType != null) foreach (var f in ltType.Fields) Console.WriteLine($"  +0x{f.Offset:X} {f.Type?.Name,-25} {f.Name}");
+
+        foreach (var domain in runtime.AppDomains)
+        {
+            try
+            {
+                var arr = cacheField.ReadObject(domain);
+                if (arr.IsNull || !arr.IsArray) continue;
+                var a = arr.AsArray();
+                Console.WriteLine($"\ncache[{domain.Name}] length={a.Length}");
+                foreach (var t in types)
+                {
+                    if (t < 0 || t >= a.Length) { Console.WriteLine($"  type {t}: out of range"); continue; }
+                    var lt = a.GetObjectValue(t);
+                    string val = "?";
+                    if (!lt.IsNull && ltType != null)
+                    {
+                        var vf = ltType.GetFieldByName("_value") ?? ltType.GetFieldByName("Value");
+                        if (vf != null) val = lt.ReadStringField(vf.Name) ?? "(null)";
+                    }
+                    Console.WriteLine($"  type {t,5} -> \"{val}\"");
+                }
+                break;
+            }
+            catch (Exception ex) { Console.WriteLine($"  [{domain.Name}] {ex.Message}"); }
+        }
+    }
+
     private static ClrType? FindType(ClrRuntime runtime, string name)
     {
         foreach (var module in runtime.EnumerateModules())

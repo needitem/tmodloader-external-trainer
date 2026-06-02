@@ -33,7 +33,7 @@ public sealed class TmlForm : Form
     public TmlForm()
     {
         Text = "tModLoader Trainer";
-        Width = 760; Height = 720;
+        Width = 880; Height = 720;
         StartPosition = FormStartPosition.CenterScreen;
         Font = new Font("Segoe UI", 9f);
 
@@ -72,7 +72,7 @@ public sealed class TmlForm : Form
         var invNote = new Label
         {
             Dock = DockStyle.Top, Height = 22, ForeColor = Color.DimGray,
-            Text = "  Double-click Stack/Prefix/Type to edit. Changing Type may need a world reload to fully apply.",
+            Text = "  Item = name · Count = quantity (double-click to edit) · Modifier = prefix · ID/Pfx# = raw numbers. Changing ID may need a world reload.",
         };
         invTab.Controls.Add(_invGrid);
         invTab.Controls.Add(invNote);
@@ -130,11 +130,13 @@ public sealed class TmlForm : Form
         _invGrid.BackgroundColor = Color.White;
         _invGrid.BorderStyle = BorderStyle.None;
         _invGrid.EnableHeadersVisualStyles = false;
-        _invGrid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Slot", Name = "slot", ReadOnly = true, Width = 130 });
-        _invGrid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Type (item ID)", Name = "type", Width = 110 });
-        _invGrid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Stack", Name = "stack", Width = 90 });
-        _invGrid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "MaxStack", Name = "maxStack", ReadOnly = true, Width = 90 });
-        _invGrid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Prefix", Name = "prefix", Width = 80 });
+        _invGrid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Slot", Name = "slot", ReadOnly = true, Width = 90 });
+        _invGrid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Item", Name = "name", ReadOnly = true, Width = 210, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill });
+        _invGrid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Count", Name = "stack", Width = 70, ToolTipText = "Stack — quantity. Double-click to edit." });
+        _invGrid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Max", Name = "maxStack", ReadOnly = true, Width = 60, ToolTipText = "Max stack for this item." });
+        _invGrid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Modifier", Name = "modifier", ReadOnly = true, Width = 110, ToolTipText = "Prefix name (e.g. Legendary)." });
+        _invGrid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "ID", Name = "type", Width = 70, ToolTipText = "Item type ID. Editable — changing it may need a world reload." });
+        _invGrid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Pfx#", Name = "prefix", Width = 55, ToolTipText = "Prefix number. Editable." });
         _invGrid.CellEndEdit += InvGrid_CellEndEdit;
     }
 
@@ -154,7 +156,7 @@ public sealed class TmlForm : Form
         if (len <= 0) return;
         for (int i = 0; i < Math.Min(len, 58); i++)
         {
-            int idx = _invGrid.Rows.Add(SlotLabel(i), "", "", "", "");
+            int idx = _invGrid.Rows.Add(SlotLabel(i), "", "", "", "", "", "");
             _invGrid.Rows[idx].Tag = i;
         }
     }
@@ -177,11 +179,15 @@ public sealed class TmlForm : Form
         foreach (DataGridViewRow row in _invGrid.Rows)
         {
             if (row.Tag is not int slot) continue;
-            bool empty = _engine.InventoryItem(slot) == IntPtr.Zero || _engine.ItemInt(slot, "type") == 0;
-            SetIfNotEditing(row.Cells["type"], empty ? "0" : _engine.ItemInt(slot, "type").ToString(), editing);
+            int type = _engine.ItemInt(slot, "type");
+            bool empty = _engine.InventoryItem(slot) == IntPtr.Zero || type == 0;
+            int prefix = empty ? 0 : _engine.ItemInt(slot, "prefix");
+            SetIfNotEditing(row.Cells["name"], empty ? "(empty)" : _engine.ItemName(type), editing);
+            SetIfNotEditing(row.Cells["type"], empty ? "0" : type.ToString(), editing);
             SetIfNotEditing(row.Cells["stack"], empty ? "" : _engine.ItemInt(slot, "stack").ToString(), editing);
             SetIfNotEditing(row.Cells["maxStack"], empty ? "" : _engine.ItemInt(slot, "maxStack").ToString(), editing);
-            SetIfNotEditing(row.Cells["prefix"], empty ? "" : _engine.ItemInt(slot, "prefix").ToString(), editing);
+            SetIfNotEditing(row.Cells["prefix"], empty ? "" : prefix.ToString(), editing);
+            SetIfNotEditing(row.Cells["modifier"], prefix > 0 ? _engine.PrefixName(prefix) : "", editing);
         }
     }
 

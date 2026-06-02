@@ -27,7 +27,7 @@ public sealed class TmlEngine : IDisposable
     public bool Rediscover()
     {
         if (Proc == null) return false;
-        try { Model = TmlDiscovery.Discover(Proc.Id); _playerStamp = 0; return true; }
+        try { Model = TmlDiscovery.Discover(Proc.Id); _playerStamp = 0; _itemNameCache.Clear(); _prefixNameCache.Clear(); return true; }
         catch (Exception ex) { Log?.Invoke("Re-scan failed: " + ex.Message); return false; }
     }
 
@@ -162,6 +162,48 @@ public sealed class TmlEngine : IDisposable
 
     public IntPtr BuffSlot(IntPtr arr, int i) => (IntPtr)(arr.ToInt64() + ArrayData + i * 4);
 
+    // ---- item / prefix names (from Terraria.Lang, localized, incl. modded) ----
+
+    private readonly Dictionary<int, string> _itemNameCache = new();
+    private readonly Dictionary<int, string> _prefixNameCache = new();
+
+    public string ItemName(int type)
+    {
+        if (type <= 0) return "";
+        if (_itemNameCache.TryGetValue(type, out var n)) return n;
+        n = ResolveName(Model?.StaticItemNameCache ?? 0, type);
+        _itemNameCache[type] = n;
+        return n;
+    }
+
+    public string PrefixName(int prefix)
+    {
+        if (prefix <= 0) return "";
+        if (_prefixNameCache.TryGetValue(prefix, out var n)) return n;
+        n = ResolveName(Model?.StaticPrefixNames ?? 0, prefix);
+        _prefixNameCache[prefix] = n;
+        return n;
+    }
+
+    /// <summary>name = (LocalizedText[] static)[index]._value</summary>
+    private string ResolveName(ulong staticCache, int index)
+    {
+        var m = Mem;
+        if (m == null || Model == null || staticCache == 0 || index < 0) return "";
+        try
+        {
+            IntPtr arr = m.ReadPtr64((IntPtr)staticCache);
+            if (arr == IntPtr.Zero) return "";
+            int len = m.ReadInt32((IntPtr)(arr.ToInt64() + 8));
+            if (index >= len) return "";
+            IntPtr lt = m.ReadPtr64((IntPtr)(arr.ToInt64() + ArrayData + index * 8));
+            if (lt == IntPtr.Zero) return "";
+            IntPtr s = m.ReadPtr64((IntPtr)(lt.ToInt64() + Model.LocalizedTextValueOff));
+            return s == IntPtr.Zero ? "" : ReadDotNetString(s);
+        }
+        catch { return ""; }
+    }
+
     // ---- inventory editor ----
 
     /// <summary>Inventory array length (59 in 1.4.4: 50 main + 4 coin + 4 ammo + 1 mouse).</summary>
@@ -235,6 +277,8 @@ public sealed class TmlEngine : IDisposable
         Model = null;
         Proc = null;
         _playerStamp = 0;
+        _itemNameCache.Clear();
+        _prefixNameCache.Clear();
     }
 
     public void Dispose() => Detach();

@@ -77,6 +77,12 @@ if (mode == "tml")
     return 0;
 }
 
+if (mode == "names")
+{
+    ClrDiscovery.Names(proc.Id, new[] { 2, 5, 9, 3, 3499, 8124, 8218 });
+    return 0;
+}
+
 if (mode == "bufftest")
 {
     using var engine = new TmlEngine();
@@ -261,7 +267,8 @@ if (mode == "inv")
     {
         int type = engine.ItemInt(i, "type");
         if (type == 0 && engine.InventoryItem(i) == IntPtr.Zero) { Console.WriteLine($"  slot {i,2}: (null)"); continue; }
-        Console.WriteLine($"  slot {i,2}: type={type} stack={engine.ItemInt(i, "stack")} maxStack={engine.ItemInt(i, "maxStack")} prefix={engine.ItemInt(i, "prefix")}");
+        int pfx = engine.ItemInt(i, "prefix");
+        Console.WriteLine($"  slot {i,2}: \"{engine.ItemName(type)}\" x{engine.ItemInt(i, "stack")}  [id={type} prefix={pfx} {(pfx > 0 ? engine.PrefixName(pfx) : "")}]");
     }
     Console.WriteLine("[inv mode] read-only.");
     return 0;
