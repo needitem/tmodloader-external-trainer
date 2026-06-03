@@ -78,6 +78,34 @@ if (mode == "tml")
     return 0;
 }
 
+if (mode == "patchm")
+{
+    using var engine = new TmlEngine();
+    engine.Log += Console.WriteLine;
+    engine.Attach();
+    IntPtr pb = IntPtr.Zero;
+    for (int i = 0; i < 40 && pb == IntPtr.Zero; i++) { pb = engine.PlayerBase(); if (pb == IntPtr.Zero) System.Threading.Thread.Sleep(500); }
+    if (pb == IntPtr.Zero) { Console.WriteLine("No world."); return 0; }
+    var m = engine.Mem!;
+    string sub = args.Length > 1 ? args[1] : "on";
+    string key = args.Length > 2 ? args[2] : "Player.RollLuck";
+    string retv = args.Length > 3 ? args[3] : "0";
+    string stateFile = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "patchm.txt");
+    if (sub == "off")
+    {
+        if (System.IO.File.Exists(stateFile)) { var p = System.IO.File.ReadAllText(stateFile).Split(' '); m.WriteBytes((IntPtr)Convert.ToInt64(p[0],16), Convert.FromHexString(p[1])); System.IO.File.Delete(stateFile); Console.WriteLine("restored."); }
+        else Console.WriteLine("no state.");
+        return 0;
+    }
+    if (!engine.Model!.Methods.TryGetValue(key, out var meth)) { Console.WriteLine($"{key} NOT discovered!"); return 0; }
+    bool isFloat = retv.StartsWith("f");
+    int n = isFloat ? 10 : (retv == "0" ? 3 : 6);
+    System.IO.File.WriteAllText(stateFile, $"{meth.addr:X} {Convert.ToHexString(m.ReadBytes((IntPtr)meth.addr, n))}");
+    bool ok = isFloat ? engine.Injector!.PatchReturnFloat(key, float.Parse(retv[1..])) : retv == "0" ? engine.Injector!.PatchReturnZero(key) : engine.Injector!.PatchReturnTrue(key);
+    Console.WriteLine($">>> {key} @0x{meth.addr:X} patched to return {retv} ({ok}). Test it; `patchm off` to undo.");
+    return 0;
+}
+
 if (mode == "craftcount")
 {
     using var engine = new TmlEngine();

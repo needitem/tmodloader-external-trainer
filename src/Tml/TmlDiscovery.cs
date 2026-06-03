@@ -143,6 +143,9 @@ public static class TmlDiscovery
         AddNamedMethod(runtime, model, "Terraria.Recipe", "PlayerMeetsTileRequirements");
         AddNamedMethod(runtime, model, "Terraria.Recipe", "CollectedEnoughItemsToCraftRecipeNew");
         AddNamedMethod(runtime, model, "Terraria.ModLoader.RecipeLoader", "RecipeAvailable");
+        AddNamedMethod(runtime, model, "Terraria.Player", "RollLuck");      // ->0 = 100% drops / best luck
+        AddNamedMethod(runtime, model, "Terraria.Player", "Fishing_GetPowerMultiplier"); // ->high = strong fishing
+        AddNamedMethod(runtime, model, "Terraria.Player", "HasNPCBannerBuff");           // ->true = all banner bonuses
 
         // Item/prefix name tables (Terraria.Lang) — gives localized names incl. modded items.
         var langType = FindType(runtime, "Terraria.Lang");

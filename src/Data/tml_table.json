@@ -32,5 +32,9 @@
 
   { "group": "⛏️ Speed", "desc": "Fast Mining — all pickaxes/drills/axes/hammers (useTime→1)", "kind": "tools", "value": "1" },
 
-  { "group": "🪑 Utility", "desc": "Craft Anywhere (all crafting stations nearby)", "kind": "craft" }
+  { "group": "💰 Loot (method patch)", "desc": "100% Drop Rate / Best Luck", "kind": "patch", "method": "Player.RollLuck", "value": "0" },
+
+  { "group": "🎣 Fishing (method patch)", "desc": "Max Fishing Power (x20)", "kind": "patch", "method": "Player.Fishing_GetPowerMultiplier", "value": "f20" },
+
+  { "group": "⚔️ Combat (method patch)", "desc": "All Banner Effects (vs all enemies)", "kind": "patch", "method": "Player.HasNPCBannerBuff", "value": "1" }
 ]

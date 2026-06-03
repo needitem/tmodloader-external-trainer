@@ -4,7 +4,7 @@ using TerrariaTrainer.Cheats;
 
 namespace TerrariaTrainer.Tml;
 
-public enum RowKind { GroupHeader, Value, Toggle, Buff, Action, Inject, Fast, UseHook, Tools, Craft }
+public enum RowKind { GroupHeader, Value, Toggle, Buff, Action, Inject, Fast, UseHook, Tools, Craft, Patch }
 
 /// <summary>A single row in the Cheat-Engine-style table.</summary>
 public sealed class CheatRow
@@ -18,6 +18,7 @@ public sealed class CheatRow
     public string? FrozenText;   // value to assert while Active (Value rows)
     public string InjectValue = "true"; // value written for Inject/Fast/UseHook rows
     public string[] Methods = Array.Empty<string>(); // use-site methods to hook (UseHook rows)
+    public string PatchMethod = ""; // method key to patch-return (Patch rows); value in InjectValue
 }
 
 internal sealed class TableEntryDto
@@ -28,6 +29,7 @@ internal sealed class TableEntryDto
     [JsonPropertyName("kind")] public string Kind { get; set; } = "value";
     [JsonPropertyName("value")] public string? Value { get; set; }
     [JsonPropertyName("methods")] public string[]? Methods { get; set; }
+    [JsonPropertyName("method")] public string? Method { get; set; }
 }
 
 /// <summary>
@@ -58,6 +60,13 @@ public static class CheatTable
             {
                 EmitGroup(rows, ref lastGroup, d.Group);
                 rows.Add(new CheatRow { Kind = RowKind.Craft, Group = d.Group, Desc = d.Desc });
+                continue;
+            }
+            if (d.Kind.Equals("patch", StringComparison.OrdinalIgnoreCase))
+            {
+                if (injector == null || d.Method == null || !injector.CanPatch(d.Method)) continue; // method absent -> skip
+                EmitGroup(rows, ref lastGroup, d.Group);
+                rows.Add(new CheatRow { Kind = RowKind.Patch, Group = d.Group, Desc = d.Desc, PatchMethod = d.Method, InjectValue = d.Value ?? "1" });
                 continue;
             }
 

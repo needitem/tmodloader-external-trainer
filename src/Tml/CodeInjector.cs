@@ -285,14 +285,12 @@ public sealed class CodeInjector
         return true;
     }
 
-    /// <summary>Patch a method's entry to `mov eax,1; ret` so it always returns true.
-    /// Used to bypass condition checks (e.g. Recipe.PlayerMeetsEnvironmentConditions = craft anywhere).</summary>
-    public bool PatchReturnTrue(string methodKey)
+    /// <summary>Patch a method's entry so it immediately returns a value (bypasses its logic).</summary>
+    public bool PatchReturn(string methodKey, byte[] code)
     {
         if (_entryHooks.ContainsKey(methodKey)) return true;
         if (!_model.Methods.TryGetValue(methodKey, out var m) || m.addr == 0) return false;
         IntPtr entry = (IntPtr)m.addr;
-        var code = new byte[] { 0xB8, 0x01, 0x00, 0x00, 0x00, 0xC3 }; // mov eax,1 ; ret
         var orig = _mem.ReadBytes(entry, code.Length);
         var suspended = SuspendTargetThreads();
         try { _mem.WriteBytes(entry, code); FlushInstructionCache(_mem.Handle, entry, (IntPtr)code.Length); }
@@ -301,7 +299,18 @@ public sealed class CodeInjector
         return true;
     }
 
-    public bool CanPatchReturnTrue(string methodKey) => _model.Methods.ContainsKey(methodKey);
+    public bool PatchReturnTrue(string key) => PatchReturn(key, new byte[] { 0xB8, 0x01, 0x00, 0x00, 0x00, 0xC3 }); // mov eax,1; ret
+    public bool PatchReturnZero(string key) => PatchReturn(key, new byte[] { 0x31, 0xC0, 0xC3 });                   // xor eax,eax; ret
+
+    /// <summary>Patch a float-returning method to return a constant (value in xmm0).</summary>
+    public bool PatchReturnFloat(string key, float value)
+    {
+        var code = new byte[] { 0xB8, 0, 0, 0, 0, 0x66, 0x0F, 0x6E, 0xC0, 0xC3 }; // mov eax,bits; movd xmm0,eax; ret
+        BitConverter.GetBytes(value).CopyTo(code, 1);
+        return PatchReturn(key, code);
+    }
+
+    public bool CanPatch(string methodKey) => _model.Methods.ContainsKey(methodKey);
 
     // ---- inventory accessories: run ApplyEquipFunctional() on every inventory accessory ----
     // Injects an asm loop at UpdateEquips' entry (rcx = this) that, for each inventory item

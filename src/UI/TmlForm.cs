@@ -366,6 +366,7 @@ public sealed class TmlForm : Form
         RowKind.UseHook => "hook",
         RowKind.Tools => "tools",
         RowKind.Craft => "craft",
+        RowKind.Patch => "patch",
         RowKind.Action => "",
         RowKind.Value => r.Field!.Kind switch
         {
@@ -448,6 +449,18 @@ public sealed class TmlForm : Form
                     AppendLog("Craft Anything OFF");
                 }
                 break;
+            case RowKind.Patch:
+                if (r.Active)
+                {
+                    bool okp = r.InjectValue.StartsWith("f")
+                        ? _engine.Injector!.PatchReturnFloat(r.PatchMethod, float.Parse(r.InjectValue[1..], System.Globalization.CultureInfo.InvariantCulture))
+                        : r.InjectValue == "0" ? _engine.Injector!.PatchReturnZero(r.PatchMethod)
+                        : _engine.Injector!.PatchReturnTrue(r.PatchMethod);
+                    if (!okp) { r.Active = false; grow.Cells["active"].Value = false; AppendLog($"Patch failed: {r.Desc}"); }
+                    else AppendLog($"ON: {r.Desc}");
+                }
+                else { _engine.Injector!.UnhookEntry(r.PatchMethod); AppendLog($"OFF: {r.Desc}"); }
+                break;
             case RowKind.UseHook:
                 if (r.Active)
                 {
@@ -508,6 +521,7 @@ public sealed class TmlForm : Form
             else if (r.Kind == RowKind.UseHook) { _engine.Injector?.UnhookUseSites(r.Field!.Name); }
             else if (r.Kind == RowKind.Tools) { _engine.RestoreFastTools(); }
             else if (r.Kind == RowKind.Craft) { foreach (var k in CraftKeys) _engine.Injector?.UnhookEntry(k); }
+            else if (r.Kind == RowKind.Patch) { _engine.Injector?.UnhookEntry(r.PatchMethod); }
         }
         foreach (DataGridViewRow gr in _grid.Rows)
             if (gr.Tag is CheatRow rr && rr.Kind != RowKind.GroupHeader)
