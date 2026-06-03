@@ -293,12 +293,12 @@ internal static class ClrDiscovery
                 Console.WriteLine($"  +0x{f.Offset:X3} (real 0x{f.Offset + 8:X3})  {f.Type?.Name,-20} {f.Name}");
     }
 
-    public static void ListMethods(int pid, string sub)
+    public static void ListMethods(int pid, string sub, string typeName = "Terraria.Player")
     {
         using var dt = DataTarget.CreateSnapshotAndAttach(pid);
         using var runtime = dt.ClrVersions.First().CreateRuntime();
-        var playerType = FindType(runtime, "Terraria.Player");
-        if (playerType == null) return;
+        var playerType = FindType(runtime, typeName);
+        if (playerType == null) { Console.WriteLine($"{typeName} not found"); return; }
         foreach (var m in playerType.Methods)
         {
             if (m.Name == null || !m.Name.Contains(sub, StringComparison.OrdinalIgnoreCase)) continue;
@@ -306,11 +306,11 @@ internal static class ClrDiscovery
         }
     }
 
-    public static void DumpMethod(int pid, string methodName, int from, int count)
+    public static void DumpMethod(int pid, string methodName, int from, int count, string typeName = "Terraria.Player")
     {
         using var dt = DataTarget.CreateSnapshotAndAttach(pid);
         using var runtime = dt.ClrVersions.First().CreateRuntime();
-        var playerType = FindType(runtime, "Terraria.Player");
+        var playerType = FindType(runtime, typeName);
         var m = playerType?.Methods.FirstOrDefault(x => x.Name == methodName && x.NativeCode != 0);
         if (m == null) { Console.WriteLine($"{methodName}: not found"); return; }
         ulong addr = m.NativeCode;

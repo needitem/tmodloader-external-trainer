@@ -138,6 +138,12 @@ public static class TmlDiscovery
             model.Methods[method.Name] = (method.NativeCode, size);
         }
 
+        // Cross-type methods we patch (e.g. force a condition check to return true).
+        AddNamedMethod(runtime, model, "Terraria.Recipe", "PlayerMeetsEnvironmentConditions");
+        AddNamedMethod(runtime, model, "Terraria.Recipe", "PlayerMeetsTileRequirements");
+        AddNamedMethod(runtime, model, "Terraria.Recipe", "CollectedEnoughItemsToCraftRecipeNew");
+        AddNamedMethod(runtime, model, "Terraria.ModLoader.RecipeLoader", "RecipeAvailable");
+
         // Item/prefix name tables (Terraria.Lang) — gives localized names incl. modded items.
         var langType = FindType(runtime, "Terraria.Lang");
         var ltType = FindType(runtime, "Terraria.Localization.LocalizedText");
@@ -164,6 +170,18 @@ public static class TmlDiscovery
         }
 
         return model;
+    }
+
+    /// <summary>Find a method in any type and store it in model.Methods keyed "Type.Method".</summary>
+    private static void AddNamedMethod(ClrRuntime runtime, TmlModel model, string typeName, string methodName)
+    {
+        var t = FindType(runtime, typeName);
+        var m = t?.Methods.FirstOrDefault(x => x.Name == methodName && x.NativeCode != 0);
+        if (m == null) return;
+        int size; try { size = (int)m.HotColdInfo.HotSize; } catch { size = 0; }
+        if (size <= 0 || size > 0x40000) size = 0x1000;
+        string shortType = typeName.Contains('.') ? typeName[(typeName.LastIndexOf('.') + 1)..] : typeName;
+        model.Methods[$"{shortType}.{methodName}"] = (m.NativeCode, size);
     }
 
     private static int OffsetOf(ClrType t, string name, int fallback)

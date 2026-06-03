@@ -20,6 +20,13 @@ public sealed class TmlForm : Form
     private readonly TextBox _search = new() { Width = 220, PlaceholderText = "search…" };
     private readonly Button _btnDisableAll = new() { Text = "Disable All", Width = 100, Height = 26 };
 
+    // Recipe condition checks patched to "return true" for Craft Anything.
+    private static readonly string[] CraftKeys =
+    {
+        "Recipe.PlayerMeetsEnvironmentConditions", "Recipe.PlayerMeetsTileRequirements",
+        "Recipe.CollectedEnoughItemsToCraftRecipeNew", "RecipeLoader.RecipeAvailable",
+    };
+
     private int _attachThrottle = 10; // attempt auto-attach on the first tick
     private TmlField? _fLife, _fLifeMax, _fMana, _fManaMax;
 
@@ -429,7 +436,17 @@ public sealed class TmlForm : Form
                 else { _engine.RestoreFastTools(); AppendLog("Fast tools off (restored)."); }
                 break;
             case RowKind.Craft:
-                AppendLog($"{(r.Active ? "Enabled" : "Disabled")} {r.Desc}");
+                if (r.Active)
+                {
+                    int done = 0;
+                    foreach (var k in CraftKeys) if (_engine.Injector!.PatchReturnTrue(k)) done++;
+                    AppendLog($"Craft Anything ON ({done}/{CraftKeys.Length} checks bypassed)");
+                }
+                else
+                {
+                    foreach (var k in CraftKeys) _engine.Injector!.UnhookEntry(k);
+                    AppendLog("Craft Anything OFF");
+                }
                 break;
             case RowKind.UseHook:
                 if (r.Active)
@@ -490,6 +507,7 @@ public sealed class TmlForm : Form
             else if (r.Kind == RowKind.Inject) { _engine.Injector?.Restore(r.Field!.Name); }
             else if (r.Kind == RowKind.UseHook) { _engine.Injector?.UnhookUseSites(r.Field!.Name); }
             else if (r.Kind == RowKind.Tools) { _engine.RestoreFastTools(); }
+            else if (r.Kind == RowKind.Craft) { foreach (var k in CraftKeys) _engine.Injector?.UnhookEntry(k); }
         }
         foreach (DataGridViewRow gr in _grid.Rows)
             if (gr.Tag is CheatRow rr && rr.Kind != RowKind.GroupHeader)

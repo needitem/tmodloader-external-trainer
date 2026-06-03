@@ -78,6 +78,87 @@ if (mode == "tml")
     return 0;
 }
 
+if (mode == "craftcount")
+{
+    using var engine = new TmlEngine();
+    engine.Attach();
+    IntPtr pb = IntPtr.Zero;
+    for (int i = 0; i < 40 && pb == IntPtr.Zero; i++) { pb = engine.PlayerBase(); if (pb == IntPtr.Zero) System.Threading.Thread.Sleep(500); }
+    if (pb == IntPtr.Zero) { Console.WriteLine("No world."); return 0; }
+    var m = engine.Mem!;
+    string stateFile = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "craftcount.txt");
+    string sub = args.Length > 1 ? args[1] : "on";
+    string mkey = args.Length > 2 ? args[2] : "Recipe.PlayerMeetsTileRequirements";
+
+    if (sub == "read")
+    {
+        var p = System.IO.File.ReadAllText(stateFile).Split(' ');
+        IntPtr cv = (IntPtr)Convert.ToInt64(p[2], 16);
+        Console.WriteLine($"call count = {m.ReadInt32((IntPtr)(cv.ToInt64() + 0x40))}");
+        return 0;
+    }
+    if (sub == "off")
+    {
+        var p = System.IO.File.ReadAllText(stateFile).Split(' ');
+        m.WriteBytes((IntPtr)Convert.ToInt64(p[0], 16), Convert.FromHexString(p[1])); System.IO.File.Delete(stateFile);
+        Console.WriteLine("restored."); return 0;
+    }
+    var meth = engine.Model!.Methods[mkey];
+    IntPtr entry = (IntPtr)meth.addr;
+    var head = m.ReadBytes(entry, 5);
+    IntPtr cave = m.AllocNear(entry, 0x50, TerrariaTrainer.Memory.Native.MemoryProtection.ExecuteReadWrite);
+    var cb = new System.Collections.Generic.List<byte>();
+    cb.Add(0xFF); cb.Add(0x05); cb.AddRange(BitConverter.GetBytes(0x40 - 6)); // inc [rip+counter@0x40]
+    cb.Add(0xB8); cb.AddRange(BitConverter.GetBytes(1));                       // mov eax,1
+    cb.Add(0xC3);                                                             // ret
+    while (cb.Count < 0x40) cb.Add(0x90);
+    cb.AddRange(BitConverter.GetBytes(0));                                     // counter
+    m.WriteBytes(cave, cb.ToArray());
+    var patch = new byte[5]; patch[0] = 0xE9; BitConverter.GetBytes((int)(cave.ToInt64() - (entry.ToInt64() + 5))).CopyTo(patch, 1);
+    m.WriteBytes(entry, patch);
+    System.IO.File.WriteAllText(stateFile, $"{entry.ToInt64():X} {Convert.ToHexString(head)} {cave.ToInt64():X}");
+    Console.WriteLine($">>> {mkey} patched w/ counter+return-true. Open crafting / move item, then `craftcount read`.");
+    return 0;
+}
+
+if (mode == "craftpatch")
+{
+    using var engine = new TmlEngine();
+    engine.Log += Console.WriteLine;
+    engine.Attach();
+    IntPtr pb = IntPtr.Zero;
+    for (int i = 0; i < 40 && pb == IntPtr.Zero; i++) { pb = engine.PlayerBase(); if (pb == IntPtr.Zero) System.Threading.Thread.Sleep(500); }
+    if (pb == IntPtr.Zero) { Console.WriteLine("No world."); return 0; }
+    var m = engine.Mem!;
+    string[] keys = { "Recipe.PlayerMeetsEnvironmentConditions", "Recipe.PlayerMeetsTileRequirements",
+        "Recipe.CollectedEnoughItemsToCraftRecipeNew", "RecipeLoader.RecipeAvailable" };
+    string stateFile = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "craftpatch.txt");
+    string sub = args.Length > 1 ? args[1] : "on";
+
+    if (sub == "off")
+    {
+        if (System.IO.File.Exists(stateFile))
+        {
+            foreach (var line in System.IO.File.ReadAllLines(stateFile)) { var p = line.Split(' '); if (p.Length == 2) m.WriteBytes((IntPtr)Convert.ToInt64(p[0], 16), Convert.FromHexString(p[1])); }
+            System.IO.File.Delete(stateFile); Console.WriteLine("restored both.");
+        }
+        else Console.WriteLine("no state.");
+        return 0;
+    }
+    var lines2 = new System.Collections.Generic.List<string>();
+    foreach (var key in keys)
+    {
+        if (!engine.Model!.Methods.TryGetValue(key, out var meth)) { Console.WriteLine($"{key} NOT discovered!"); continue; }
+        Console.WriteLine($"{key} @0x{meth.addr:X}");
+        lines2.Add($"{meth.addr:X} {Convert.ToHexString(m.ReadBytes((IntPtr)meth.addr, 6))}");
+        engine.Injector!.PatchReturnTrue(key);
+    }
+    System.IO.File.WriteAllLines(stateFile, lines2);
+    for (int t = 0; t < 4; t++) { engine.SetCraftAnywhere(); System.Threading.Thread.Sleep(300); }
+    Console.WriteLine(">>> PATCHED both (env + stations). Open crafting menu / move an item. `craftpatch off` to undo.");
+    return 0;
+}
+
 if (mode == "invacc")
 {
     using var engine = new TmlEngine();
@@ -449,7 +530,7 @@ if (mode == "scanall")
 
 if (mode == "methods")
 {
-    ClrDiscovery.ListMethods(proc.Id, args.Length > 1 ? args[1] : "Equip");
+    ClrDiscovery.ListMethods(proc.Id, args.Length > 1 ? args[1] : "Equip", args.Length > 2 ? args[2] : "Terraria.Player");
     return 0;
 }
 
@@ -463,7 +544,8 @@ if (mode == "dump")
 {
     ClrDiscovery.DumpMethod(proc.Id, args.Length > 1 ? args[1] : "ItemCheck_UseMiningTools_ActuallyUseMiningTool",
         args.Length > 2 ? Convert.ToInt32(args[2], 16) : 0,
-        args.Length > 3 ? Convert.ToInt32(args[3], 16) : 0x40);
+        args.Length > 3 ? Convert.ToInt32(args[3], 16) : 0x40,
+        args.Length > 4 ? args[4] : "Terraria.Player");
     return 0;
 }
 

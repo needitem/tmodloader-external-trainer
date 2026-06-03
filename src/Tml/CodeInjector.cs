@@ -280,10 +280,28 @@ public sealed class CodeInjector
         var suspended = SuspendTargetThreads();
         try { _mem.WriteBytes(h.entry, h.orig); FlushInstructionCache(_mem.Handle, h.entry, (IntPtr)h.orig.Length); }
         finally { foreach (var s in suspended) { ResumeThread(s); CloseHandle(s); } }
-        _mem.Free(h.cave);
+        if (h.cave != IntPtr.Zero) _mem.Free(h.cave);
         _entryHooks.Remove(key);
         return true;
     }
+
+    /// <summary>Patch a method's entry to `mov eax,1; ret` so it always returns true.
+    /// Used to bypass condition checks (e.g. Recipe.PlayerMeetsEnvironmentConditions = craft anywhere).</summary>
+    public bool PatchReturnTrue(string methodKey)
+    {
+        if (_entryHooks.ContainsKey(methodKey)) return true;
+        if (!_model.Methods.TryGetValue(methodKey, out var m) || m.addr == 0) return false;
+        IntPtr entry = (IntPtr)m.addr;
+        var code = new byte[] { 0xB8, 0x01, 0x00, 0x00, 0x00, 0xC3 }; // mov eax,1 ; ret
+        var orig = _mem.ReadBytes(entry, code.Length);
+        var suspended = SuspendTargetThreads();
+        try { _mem.WriteBytes(entry, code); FlushInstructionCache(_mem.Handle, entry, (IntPtr)code.Length); }
+        finally { foreach (var h in suspended) { ResumeThread(h); CloseHandle(h); } }
+        _entryHooks[methodKey] = (entry, orig, IntPtr.Zero);
+        return true;
+    }
+
+    public bool CanPatchReturnTrue(string methodKey) => _model.Methods.ContainsKey(methodKey);
 
     // ---- inventory accessories: run ApplyEquipFunctional() on every inventory accessory ----
     // Injects an asm loop at UpdateEquips' entry (rcx = this) that, for each inventory item
