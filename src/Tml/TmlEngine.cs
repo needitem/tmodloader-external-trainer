@@ -258,6 +258,33 @@ public sealed class TmlEngine : IDisposable
             : m.WriteInt32((IntPtr)(item.ToInt64() + off), value);
     }
 
+    /// <summary>Real memory offset of a Player field by name, or -1.</summary>
+    public int FieldOffset(string name) => Model?.PlayerFields.FirstOrDefault(f => f.Name == name)?.Offset ?? -1;
+
+    /// <summary>Craft Anywhere: mark every crafting station + liquid as nearby (recomputed each
+    /// frame, so call at high frequency). _adjTile is a bool[] of station proximity flags.</summary>
+    public void SetCraftAnywhere()
+    {
+        var m = Mem; var pb = PlayerBase();
+        if (m == null || pb == IntPtr.Zero) return;
+        int adjTileOff = FieldOffset("_adjTile");
+        if (adjTileOff >= 0)
+        {
+            IntPtr arr = m.ReadPtr64((IntPtr)(pb.ToInt64() + adjTileOff));
+            if (arr != IntPtr.Zero)
+            {
+                int len = m.ReadInt32((IntPtr)(arr.ToInt64() + 8));
+                for (int i = 0; i < Math.Min(len, 700); i++)
+                    m.WriteByte((IntPtr)(arr.ToInt64() + 0x10 + i), 1);
+            }
+        }
+        foreach (var f in new[] { "adjWater", "adjHoney", "adjLava", "alchemyTable" })
+        {
+            int off = FieldOffset(f);
+            if (off >= 0) m.WriteByte((IntPtr)(pb.ToInt64() + off), 1);
+        }
+    }
+
     // ---- fast mining/tools: lower the use-time of pickaxes/drills/axes/hammers ----
     // Mining speed for a tool = its useTime/useAnimation. Setting them low = fast mining.
     // Safe (plain item-field writes). Originals are snapshotted so disable restores them.

@@ -78,6 +78,63 @@ if (mode == "tml")
     return 0;
 }
 
+if (mode == "invacc")
+{
+    using var engine = new TmlEngine();
+    engine.Log += Console.WriteLine;
+    engine.Attach();
+    IntPtr pb = IntPtr.Zero;
+    for (int i = 0; i < 40 && pb == IntPtr.Zero; i++) { pb = engine.PlayerBase(); if (pb == IntPtr.Zero) System.Threading.Thread.Sleep(500); }
+    if (pb == IntPtr.Zero) { Console.WriteLine("No world."); return 0; }
+    string sub = args.Length > 1 ? args[1] : "on";
+    string stateFile = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "invacc.txt");
+    var m = engine.Mem!;
+
+    if (sub == "off")
+    {
+        if (!System.IO.File.Exists(stateFile)) { Console.WriteLine("no state."); return 0; }
+        var p = System.IO.File.ReadAllText(stateFile).Split(' ');
+        m.WriteBytes((IntPtr)Convert.ToInt64(p[0], 16), Convert.FromHexString(p[1]));
+        System.IO.File.Delete(stateFile);
+        Console.WriteLine(">>> restored UpdateEquips. (cave leaked but harmless; gone on game restart)");
+        return 0;
+    }
+
+    if (sub == "count")
+    {
+        var p = System.IO.File.ReadAllText(stateFile).Split(' ');
+        if (p.Length < 3) { Console.WriteLine("no cave addr saved (re-run 'on')."); return 0; }
+        IntPtr cave = (IntPtr)Convert.ToInt64(p[2], 16);
+        IntPtr ueAddr = (IntPtr)Convert.ToInt64(p[0], 16);
+        Console.WriteLine($"UpdateEquips entry bytes: {Convert.ToHexString(m.ReadBytes(ueAddr, 8))} (E9..=patched)");
+        Console.WriteLine($"cave @0x{cave.ToInt64():X} first bytes: {Convert.ToHexString(m.ReadBytes(cave, 16))} (5051 52..=ok)");
+        Console.WriteLine($"UpdateEquips entries (hook runs) = {m.ReadInt32((IntPtr)(cave.ToInt64() + 0x1F0))}");
+        Console.WriteLine($"ApplyEquipFunctional calls (accessories applied) = {m.ReadInt32((IntPtr)(cave.ToInt64() + 0x1F4))}");
+        // also show how many accessories are in inventory per our offset
+        int accCount = 0;
+        for (int s = 0; s < 50; s++) if (engine.ItemInt(s, "type") != 0 && engine.ItemInt(s, "accessory") != 0) accCount++;
+        Console.WriteLine($"inventory items with accessory!=0 (our offset) = {accCount}");
+        return 0;
+    }
+
+    var ue = engine.Model!.Methods["UpdateEquips"];
+    Console.WriteLine($"UpdateEquips @0x{ue.addr:X} size=0x{ue.size:X}");
+    var orig = m.ReadBytes((IntPtr)ue.addr, 8);
+    bool ok = engine.Injector!.HookInventoryAccessories();
+    IntPtr caveAddr = engine.Injector!.EntryCave("invAccessories");
+    System.IO.File.WriteAllText(stateFile, $"{ue.addr:X} {Convert.ToHexString(orig)} {caveAddr.ToInt64():X}");
+    Console.WriteLine($"hook ok={ok}, cave=0x{caveAddr.ToInt64():X}");
+    Console.WriteLine($"  entry after: {Convert.ToHexString(m.ReadBytes((IntPtr)ue.addr, 8))} (E9=patched)");
+    Console.WriteLine($"  cave bytes : {Convert.ToHexString(m.ReadBytes(caveAddr, 16))} (5051=ok)");
+    Console.WriteLine("  watching entry-counter for 2s (should grow if hook runs):");
+    for (int k = 0; k < 4; k++) { System.Threading.Thread.Sleep(500); Console.WriteLine($"    entries={m.ReadInt32((IntPtr)(caveAddr.ToInt64() + 0x1F0))} calls={m.ReadInt32((IntPtr)(caveAddr.ToInt64() + 0x1F4))} loops={m.ReadInt32((IntPtr)(caveAddr.ToInt64() + 0x1F8))} nonnull={m.ReadInt32((IntPtr)(caveAddr.ToInt64() + 0x1FC))}"); }
+    Console.WriteLine($"  cave saw player    = 0x{m.ReadInt64((IntPtr)(caveAddr.ToInt64() + 0x1E0)):X}");
+    Console.WriteLine($"  actual local player= 0x{engine.PlayerBase().ToInt64():X}");
+    int diagAcc = 0; for (int s = 0; s < 50; s++) if (engine.ItemInt(s, "type") != 0 && engine.ItemInt(s, "accessory") != 0) diagAcc++;
+    Console.WriteLine($"  diag accessory count = {diagAcc}, accOff=0x{engine.Model!.ItemFields["accessory"]:X}");
+    return 0;
+}
+
 if (mode == "drilltest")
 {
     // SAFE: write the HELD item's use-time fields (no code patching). For ~30s.
@@ -280,6 +337,24 @@ if (mode == "minehook")
     return 0; // persistent — leaves the hook active so you can test at leisure
 }
 
+if (mode == "caninject")
+{
+    using var engine = new TmlEngine();
+    engine.Attach();
+    IntPtr pb = IntPtr.Zero;
+    for (int i = 0; i < 40 && pb == IntPtr.Zero; i++) { pb = engine.PlayerBase(); if (pb == IntPtr.Zero) System.Threading.Thread.Sleep(500); }
+    string[] fs = { "manaFlower","accFishingLine","accLavaFishing","accFishingBobber","magicQuiver","ammoBox",
+        "kbGlove","shimmerImmune","blackBelt","panic","canFloatInWater","iceSkate","gravControl","accMerman",
+        "dangerSense","fireWalk","magmaStone","waterWalk","noFallDmg","noKnockback","findTreasure","nightVision",
+        "detectCreature","invis" };
+    foreach (var n in fs)
+    {
+        var sites = engine.Injector!.FindStores(n);
+        Console.WriteLine($"  {n,-18}: {(sites.Count > 0 ? $"INJECTABLE ({sites.Count} reset site)" : "no reset in ResetEffects")}");
+    }
+    return 0;
+}
+
 if (mode == "injecttest")
 {
     using var engine = new TmlEngine();
@@ -369,6 +444,18 @@ if (mode == "scanoff")
 if (mode == "scanall")
 {
     ClrDiscovery.ScanAllRefs(proc.Id, args.Length > 1 ? args[1] : "pickSpeed");
+    return 0;
+}
+
+if (mode == "methods")
+{
+    ClrDiscovery.ListMethods(proc.Id, args.Length > 1 ? args[1] : "Equip");
+    return 0;
+}
+
+if (mode == "itemfields")
+{
+    ClrDiscovery.ListItemFields(proc.Id, args.Length > 1 ? args[1] : "");
     return 0;
 }
 

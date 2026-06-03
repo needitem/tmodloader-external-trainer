@@ -285,6 +285,115 @@ public sealed class CodeInjector
         return true;
     }
 
+    // ---- inventory accessories: run ApplyEquipFunctional() on every inventory accessory ----
+    // Injects an asm loop at UpdateEquips' entry (rcx = this) that, for each inventory item
+    // with item.accessory == true, calls player.ApplyEquipFunctional(item, hideVisual=true).
+    // Runs on the game thread each frame, so effects apply exactly like equipped accessories.
+
+    public bool HookInventoryAccessories()
+    {
+        const string KEY = "invAccessories";
+        if (_entryHooks.ContainsKey(KEY)) return true;
+        if (!_model.Methods.TryGetValue("UpdateEquips", out var ue) || ue.addr == 0) return false;
+        if (!_model.Methods.TryGetValue("ApplyEquipFunctional", out var apply) || apply.addr == 0) return false;
+        if (!_model.ItemFields.TryGetValue("accessory", out int accOff)) return false;
+        int invOff = _model.InventoryOff;
+
+        IntPtr entry = (IntPtr)ue.addr;
+        var head = _mem.ReadBytes(entry, 16);
+        int disp = PrologueLen(head, 5);
+        if (disp < 5) return false;
+
+        IntPtr cave = _mem.AllocNear(entry, 0x200, MemoryProtection.ExecuteReadWrite);
+        if (cave == IntPtr.Zero) return false;
+
+        // ---- mini-assembler ----
+        var b = new List<byte>();
+        var labels = new Dictionary<string, int>();
+        var rel32 = new List<(int pos, string label)>();      // internal jumps
+        var abs32 = new List<(int pos, ulong target)>();      // call/jmp to absolute addr (rel32)
+        void E(params byte[] x) => b.AddRange(x);
+        void U32(int v) => b.AddRange(BitConverter.GetBytes(v));
+        void L(string n) => labels[n] = b.Count;
+        void JccNear(byte cc, string lbl) { E(0x0F, cc); rel32.Add((b.Count, lbl)); U32(0); }
+        void JmpNear(string lbl) { E(0xE9); rel32.Add((b.Count, lbl)); U32(0); }
+        void CallAbs(ulong target) { E(0xE8); abs32.Add((b.Count, target)); U32(0); }
+        void JmpAbs(ulong target) { E(0xE9); abs32.Add((b.Count, target)); U32(0); }
+        void IncAbs(ulong target) { E(0xFF, 0x05); abs32.Add((b.Count, target)); U32(0); } // inc dword [rip+...]
+        ulong ENTRYCNT = (ulong)(cave.ToInt64() + 0x1F0), CALLCNT = (ulong)(cave.ToInt64() + 0x1F4);
+        ulong LOOPCNT = (ulong)(cave.ToInt64() + 0x1F8);
+        ulong NONNULL = (ulong)(cave.ToInt64() + 0x1FC);
+
+        IncAbs(ENTRYCNT);                    // count every UpdateEquips entry (proves hook runs)
+
+        // save
+        E(0x50, 0x51, 0x52);                 // push rax, rcx, rdx
+        E(0x41, 0x50, 0x41, 0x51, 0x41, 0x52, 0x41, 0x53); // push r8,r9,r10,r11
+        E(0x53, 0x56, 0x57, 0x41, 0x54);     // push rbx, rsi, rdi, r12   (11 pushes total)
+
+        E(0x48, 0x8B, 0xD9);                 // mov rbx, rcx
+        E(0x48, 0x89, 0x1D); abs32.Add((b.Count, (ulong)(cave.ToInt64() + 0x1E0))); U32(0); // mov [rip+PLAYERPTR], rbx
+        E(0x48, 0x8B, 0xB3); U32(invOff);    // mov rsi, [rbx+invOff]
+        E(0x48, 0x85, 0xF6);                 // test rsi, rsi
+        JccNear(0x84, "DONE");               // je DONE
+        E(0x45, 0x31, 0xE4);                 // xor r12d, r12d
+        L("LOOP");
+        IncAbs(LOOPCNT);                     // count loop iterations
+        E(0x49, 0x83, 0xFC, 0x32);           // cmp r12, 50
+        JccNear(0x8D, "DONE");               // jge DONE
+        E(0x4A, 0x8B, 0x7C, 0xE6, 0x10);     // mov rdi, [rsi+r12*8+0x10]
+        E(0x48, 0x85, 0xFF);                 // test rdi, rdi
+        JccNear(0x84, "NEXT");               // je NEXT
+        IncAbs(NONNULL);                     // count non-null items scanned
+        E(0x80, 0xBF); U32(accOff); E(0x00); // cmp byte [rdi+accOff], 0
+        JccNear(0x84, "NEXT");               // je NEXT
+        IncAbs(CALLCNT);                     // count each accessory we call Apply on
+        E(0x48, 0x8B, 0xCB);                 // mov rcx, rbx   (this)
+        E(0x48, 0x8B, 0xD7);                 // mov rdx, rdi   (item)
+        E(0x41, 0xB8, 0x01, 0x00, 0x00, 0x00); // mov r8d, 1   (hideVisual)
+        E(0x53, 0x56, 0x57, 0x41, 0x54);     // push rbx, rsi, rdi, r12  (protect loop state across call)
+        E(0x48, 0x83, 0xEC, 0x20);           // sub rsp, 0x20  (shadow space)
+        CallAbs(apply.addr);                 // call ApplyEquipFunctional
+        E(0x48, 0x83, 0xC4, 0x20);           // add rsp, 0x20
+        E(0x41, 0x5C, 0x5F, 0x5E, 0x5B);     // pop r12, rdi, rsi, rbx
+        L("NEXT");
+        E(0x49, 0xFF, 0xC4);                 // inc r12
+        JmpNear("LOOP");
+        L("DONE");
+        // restore (reverse)
+        E(0x41, 0x5C, 0x5F, 0x5E, 0x5B);     // pop r12, rdi, rsi, rbx
+        E(0x41, 0x5B, 0x41, 0x5A, 0x41, 0x59, 0x41, 0x58); // pop r11,r10,r9,r8
+        E(0x5A, 0x59, 0x58);                 // pop rdx, rcx, rax
+        b.AddRange(head.Take(disp));         // displaced prologue
+        JmpAbs((ulong)(entry.ToInt64() + disp)); // jmp back
+
+        // patch fixups
+        var code = b.ToArray();
+        foreach (var (pos, lbl) in rel32)
+            BitConverter.GetBytes(labels[lbl] - (pos + 4)).CopyTo(code, pos);
+        foreach (var (pos, target) in abs32)
+            BitConverter.GetBytes((int)((long)target - (cave.ToInt64() + pos + 4))).CopyTo(code, pos);
+        _mem.WriteBytes(cave, code);
+
+        // patch UpdateEquips entry -> jmp cave
+        var patch = new byte[disp];
+        patch[0] = 0xE9;
+        BitConverter.GetBytes((int)(cave.ToInt64() - (entry.ToInt64() + 5))).CopyTo(patch, 1);
+        for (int k = 5; k < disp; k++) patch[k] = 0x90;
+
+        var suspended = SuspendTargetThreads();
+        try { _mem.WriteBytes(entry, patch); FlushInstructionCache(_mem.Handle, entry, (IntPtr)disp); }
+        finally { foreach (var h in suspended) { ResumeThread(h); CloseHandle(h); } }
+
+        _entryHooks[KEY] = (entry, head.Take(disp).ToArray(), cave);
+        return true;
+    }
+
+    public void UnhookInventoryAccessories() => UnhookEntry("invAccessories");
+
+    /// <summary>Cave base for an entry hook (diagnostics: counters live at cave+0x1F0/0x1F4).</summary>
+    public IntPtr EntryCave(string key) => _entryHooks.TryGetValue(key, out var h) ? h.cave : IntPtr.Zero;
+
     /// <summary>Length of whole instructions covering at least <paramref name="min"/> bytes; 0 if undecodable.</summary>
     private static int PrologueLen(byte[] c, int min)
     {

@@ -103,7 +103,7 @@ public static class TmlDiscovery
         if (itemType != null)
         {
             foreach (var name in new[] { "type", "stack", "maxStack", "prefix", "netID", "favorited",
-                "useTime", "useAnimation", "useStyle", "pick", "axe", "hammer", "tileBoost", "reuseDelay" })
+                "useTime", "useAnimation", "useStyle", "pick", "axe", "hammer", "tileBoost", "reuseDelay", "accessory" })
             {
                 var f = itemType.GetFieldByName(name);
                 if (f != null) model.ItemFields[name] = f.Offset + HeaderSize;
@@ -126,7 +126,7 @@ public static class TmlDiscovery
         // Named methods we hook at the use-site (mining reads pickSpeed; movement reads moveSpeed).
         var hookNames = new HashSet<string> {
             "ItemCheck_UseMiningTools_ActuallyUseMiningTool", "UseShovel", "PlaceThing_TryReplacingTiles",
-            "Update", "UpdateEquips",
+            "Update", "UpdateEquips", "ApplyEquipFunctional",
         };
         foreach (var method in playerType.Methods)
         {

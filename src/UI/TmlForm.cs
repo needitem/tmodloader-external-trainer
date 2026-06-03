@@ -96,6 +96,7 @@ public sealed class TmlForm : Form
                 case RowKind.Inject: _engine.WriteField(r.Field!, r.InjectValue); break;
                 case RowKind.Fast: _engine.WriteField(r.Field!, r.InjectValue); break;
                 case RowKind.Tools: _engine.AssertCachedTools(int.TryParse(r.InjectValue, out var t) ? t : 1, 4); break;
+                case RowKind.Craft: _engine.SetCraftAnywhere(); break;
             }
         }
     }
@@ -357,6 +358,7 @@ public sealed class TmlForm : Form
         RowKind.Fast => "fast",
         RowKind.UseHook => "hook",
         RowKind.Tools => "tools",
+        RowKind.Craft => "craft",
         RowKind.Action => "",
         RowKind.Value => r.Field!.Kind switch
         {
@@ -425,6 +427,9 @@ public sealed class TmlForm : Form
                     AppendLog($"Fast tools on: {_engine.ApplyFastTools(ut, 4)} tool(s) sped up.");
                 }
                 else { _engine.RestoreFastTools(); AppendLog("Fast tools off (restored)."); }
+                break;
+            case RowKind.Craft:
+                AppendLog($"{(r.Active ? "Enabled" : "Disabled")} {r.Desc}");
                 break;
             case RowKind.UseHook:
                 if (r.Active)

@@ -282,6 +282,30 @@ internal static class ClrDiscovery
         return res;
     }
 
+    public static void ListItemFields(int pid, string sub)
+    {
+        using var dt = DataTarget.CreateSnapshotAndAttach(pid);
+        using var runtime = dt.ClrVersions.First().CreateRuntime();
+        var itemType = FindType(runtime, "Terraria.Item");
+        if (itemType == null) return;
+        foreach (var f in itemType.Fields.OrderBy(f => f.Offset))
+            if (f.Name != null && (sub == "" || f.Name.Contains(sub, StringComparison.OrdinalIgnoreCase)))
+                Console.WriteLine($"  +0x{f.Offset:X3} (real 0x{f.Offset + 8:X3})  {f.Type?.Name,-20} {f.Name}");
+    }
+
+    public static void ListMethods(int pid, string sub)
+    {
+        using var dt = DataTarget.CreateSnapshotAndAttach(pid);
+        using var runtime = dt.ClrVersions.First().CreateRuntime();
+        var playerType = FindType(runtime, "Terraria.Player");
+        if (playerType == null) return;
+        foreach (var m in playerType.Methods)
+        {
+            if (m.Name == null || !m.Name.Contains(sub, StringComparison.OrdinalIgnoreCase)) continue;
+            Console.WriteLine($"  {m.Name}{m.Signature?.Substring(Math.Max(0, (m.Signature?.IndexOf('(') ?? 0)))}  @0x{m.NativeCode:X}");
+        }
+    }
+
     public static void DumpMethod(int pid, string methodName, int from, int count)
     {
         using var dt = DataTarget.CreateSnapshotAndAttach(pid);

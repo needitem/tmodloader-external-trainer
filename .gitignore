@@ -17,3 +17,7 @@ diag/obj/
 
 # Publish output / release artifacts
 publish/
+
+# Lock-avoidance build output
+build2/
+/tmp/

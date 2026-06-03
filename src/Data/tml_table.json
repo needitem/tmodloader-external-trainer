@@ -14,6 +14,23 @@
   { "group": "🛡️ Survival (code injection)", "desc": "Lava Immunity (Magma Stone)", "field": "magmaStone", "kind": "inject" },
 
   { "group": "🏃 Movement (code injection)", "desc": "Water Walking", "field": "waterWalk", "kind": "inject" },
+  { "group": "🏃 Movement (code injection)", "desc": "Float in Water", "field": "canFloatInWater", "kind": "inject" },
+  { "group": "🏃 Movement (code injection)", "desc": "Ice Skating", "field": "iceSkate", "kind": "inject" },
+  { "group": "🏃 Movement (code injection)", "desc": "Gravity Control", "field": "gravControl", "kind": "inject" },
+  { "group": "🏃 Movement (code injection)", "desc": "Merman (breathe underwater)", "field": "accMerman", "kind": "inject" },
 
-  { "group": "⛏️ Speed", "desc": "Fast Mining — all pickaxes/drills/axes/hammers (useTime→1)", "kind": "tools", "value": "1" }
+  { "group": "💍 Accessory Effects (code injection)", "desc": "Mana Flower (auto mana potion)", "field": "manaFlower", "kind": "inject" },
+  { "group": "💍 Accessory Effects (code injection)", "desc": "Fishing Line (never breaks)", "field": "accFishingLine", "kind": "inject" },
+  { "group": "💍 Accessory Effects (code injection)", "desc": "Lava Fishing", "field": "accLavaFishing", "kind": "inject" },
+  { "group": "💍 Accessory Effects (code injection)", "desc": "Fishing Bobber", "field": "accFishingBobber", "kind": "inject" },
+  { "group": "💍 Accessory Effects (code injection)", "desc": "Magic Quiver (+arrow)", "field": "magicQuiver", "kind": "inject" },
+  { "group": "💍 Accessory Effects (code injection)", "desc": "Ammo Box (ammo conservation)", "field": "ammoBox", "kind": "inject" },
+  { "group": "💍 Accessory Effects (code injection)", "desc": "Knockback Glove", "field": "kbGlove", "kind": "inject" },
+  { "group": "💍 Accessory Effects (code injection)", "desc": "Shimmer Immunity", "field": "shimmerImmune", "kind": "inject" },
+  { "group": "💍 Accessory Effects (code injection)", "desc": "Black Belt (dodge)", "field": "blackBelt", "kind": "inject" },
+  { "group": "💍 Accessory Effects (code injection)", "desc": "Panic! (speed after hit)", "field": "panic", "kind": "inject" },
+
+  { "group": "⛏️ Speed", "desc": "Fast Mining — all pickaxes/drills/axes/hammers (useTime→1)", "kind": "tools", "value": "1" },
+
+  { "group": "🪑 Utility", "desc": "Craft Anywhere (all crafting stations nearby)", "kind": "craft" }
 ]
