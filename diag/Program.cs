@@ -78,6 +78,208 @@ if (mode == "tml")
     return 0;
 }
 
+if (mode == "drilltest")
+{
+    // SAFE: write the HELD item's use-time fields (no code patching). For ~30s.
+    using var engine = new TmlEngine();
+    engine.Attach();
+    IntPtr pb = IntPtr.Zero;
+    for (int i = 0; i < 40 && pb == IntPtr.Zero; i++) { pb = engine.PlayerBase(); if (pb == IntPtr.Zero) System.Threading.Thread.Sleep(500); }
+    if (pb == IntPtr.Zero) { Console.WriteLine("No world."); return 0; }
+    var m = engine.Mem!;
+    // Find mining tools (pick/axe/hammer > 0) anywhere in the inventory.
+    var tools = new System.Collections.Generic.List<int>();
+    for (int s = 0; s < 50; s++)
+    {
+        if (engine.ItemInt(s, "type") == 0) continue;
+        if (engine.ItemInt(s, "pick") > 0 || engine.ItemInt(s, "axe") > 0 || engine.ItemInt(s, "hammer") > 0)
+        {
+            tools.Add(s);
+            Console.WriteLine($"  tool @ slot {s}: {engine.ItemName(engine.ItemInt(s, "type"))} pick={engine.ItemInt(s, "pick")} useTime={engine.ItemInt(s, "useTime")} useAnim={engine.ItemInt(s, "useAnimation")}");
+        }
+    }
+    if (tools.Count == 0) { Console.WriteLine("no mining tools found in inventory!"); return 0; }
+    int uTime = args.Length > 1 ? int.Parse(args[1]) : 1;
+    int uAnim = args.Length > 2 ? int.Parse(args[2]) : 4;
+    int secs = args.Length > 3 ? int.Parse(args[3]) : 30;
+    Console.WriteLine($">>> setting {tools.Count} tool(s) useTime={uTime}, useAnimation={uAnim} for {secs}s. MINE NOW.");
+    TimeBeginPeriod(1);
+    long end = Environment.TickCount64 + secs * 1000;
+    while (Environment.TickCount64 < end)
+    {
+        foreach (int s in tools)
+        {
+            engine.SetItemInt(s, "useTime", uTime);
+            engine.SetItemInt(s, "useAnimation", uAnim);
+            engine.SetItemInt(s, "reuseDelay", 0);
+        }
+        System.Threading.Thread.Sleep(2);
+    }
+    TimeEndPeriod(1);
+    Console.WriteLine(">>> done. (Switch items or reload to fully reset the item's stats.)");
+    return 0;
+}
+
+if (mode == "swingtest")
+{
+    // SAFE: high-frequency field write only (no code patching). field=value for ~25s.
+    using var engine = new TmlEngine();
+    engine.Attach();
+    IntPtr pb = IntPtr.Zero;
+    for (int i = 0; i < 40 && pb == IntPtr.Zero; i++) { pb = engine.PlayerBase(); if (pb == IntPtr.Zero) System.Threading.Thread.Sleep(500); }
+    if (pb == IntPtr.Zero) { Console.WriteLine("No world."); return 0; }
+    string fieldName = args.Length > 1 ? args[1] : "toolTime";
+    int value = args.Length > 2 ? int.Parse(args[2]) : 0;
+    int secs = args.Length > 3 ? int.Parse(args[3]) : 25;
+    var f = engine.Model!.PlayerFields.FirstOrDefault(x => x.Name == fieldName);
+    if (f == null) { Console.WriteLine($"{fieldName} not found"); return 0; }
+    Console.WriteLine($">>> high-freq writing {fieldName}={value} for {secs}s. MINE NOW.");
+    TimeBeginPeriod(1);
+    long endTick = Environment.TickCount64 + secs * 1000;
+    while (Environment.TickCount64 < endTick)
+    {
+        engine.PlayerBase(); // refresh cache
+        engine.WriteField(f, value.ToString());
+        System.Threading.Thread.Sleep(1);
+    }
+    TimeEndPeriod(1);
+    Console.WriteLine(">>> done (stopped writing; field back to normal).");
+    return 0;
+}
+
+if (mode == "minecount")
+{
+    using var engine = new TmlEngine();
+    engine.Attach();
+    IntPtr pb = IntPtr.Zero;
+    for (int i = 0; i < 60 && pb == IntPtr.Zero; i++) { pb = engine.PlayerBase(); if (pb == IntPtr.Zero) System.Threading.Thread.Sleep(500); }
+    if (pb == IntPtr.Zero) { Console.WriteLine("No world."); return 0; }
+    var mem = engine.Mem!;
+    string method = args.Length > 2 ? args[2] : "ItemCheck_UseMiningTools_ActuallyUseMiningTool";
+    string stateFile = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "minecount.txt");
+    string sub = args.Length > 1 ? args[1] : "on";
+
+    if (sub == "read")
+    {
+        var st = System.IO.File.ReadAllText(stateFile).Split(' ');
+        IntPtr caveR = (IntPtr)Convert.ToInt64(st[2], 16);
+        Console.WriteLine($"call count = {mem.ReadInt32((IntPtr)(caveR.ToInt64() + 0x30))}");
+        return 0;
+    }
+    if (sub == "off")
+    {
+        var st = System.IO.File.ReadAllText(stateFile).Split(' ');
+        IntPtr e = (IntPtr)Convert.ToInt64(st[0], 16);
+        mem.WriteBytes(e, Convert.FromHexString(st[1]));
+        System.IO.File.Delete(stateFile);
+        Console.WriteLine("restored.");
+        return 0;
+    }
+
+    if (!engine.Model!.Methods.TryGetValue(method, out var m)) { Console.WriteLine($"{method} not found in model"); return 0; }
+    IntPtr entry = (IntPtr)m.addr;
+    var head = mem.ReadBytes(entry, 5);
+    IntPtr cave = mem.AllocNear(entry, 0x40, TerrariaTrainer.Memory.Native.MemoryProtection.ExecuteReadWrite);
+    if (cave == IntPtr.Zero) { Console.WriteLine("alloc failed"); return 0; }
+
+    var cb = new System.Collections.Generic.List<byte>();
+    cb.Add(0xFF); cb.Add(0x05); cb.AddRange(BitConverter.GetBytes(0x30 - 6));   // inc dword [rip+0x2A] -> counter@+0x30
+    cb.AddRange(head);                                                          // displaced 5 prologue bytes
+    cb.Add(0xE9); cb.AddRange(BitConverter.GetBytes((int)((entry.ToInt64() + 5) - (cave.ToInt64() + cb.Count + 5)))); // jmp back
+    while (cb.Count < 0x30) cb.Add(0x90);
+    cb.AddRange(BitConverter.GetBytes(0));                                       // counter
+    mem.WriteBytes(cave, cb.ToArray());
+
+    var patch = new byte[5]; patch[0] = 0xE9;
+    BitConverter.GetBytes((int)(cave.ToInt64() - (entry.ToInt64() + 5))).CopyTo(patch, 1);
+    mem.WriteBytes(entry, patch);
+    System.IO.File.WriteAllText(stateFile, $"{entry.ToInt64():X} {Convert.ToHexString(head)} {cave.ToInt64():X}");
+    Console.WriteLine($">>> counter hooked on {method}. MINE for a few seconds, then run: minecount read");
+    return 0;
+}
+
+if (mode == "minewrite")
+{
+    using var engine = new TmlEngine();
+    engine.Log += Console.WriteLine;
+    engine.Attach();
+    IntPtr pb = IntPtr.Zero;
+    for (int i = 0; i < 60 && pb == IntPtr.Zero; i++) { pb = engine.PlayerBase(); if (pb == IntPtr.Zero) System.Threading.Thread.Sleep(500); }
+    if (pb == IntPtr.Zero) { Console.WriteLine("No world."); return 0; }
+
+    string method = "ItemCheck_UseMiningTools_ActuallyUseMiningTool";
+    int off = engine.Model!.PlayerFields.First(f => f.Name == "pickSpeed").Offset;
+    string val = args.Length > 1 ? args[1] : "0.1";
+    string stateFile = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "minewrite.txt");
+
+    if (val == "off")
+    {
+        if (System.IO.File.Exists(stateFile))
+        {
+            var p = System.IO.File.ReadAllText(stateFile).Split(' ');
+            IntPtr e = (IntPtr)Convert.ToInt64(p[0], 16);
+            engine.Mem!.WriteBytes(e, Convert.FromHexString(p[1]));
+            System.IO.File.Delete(stateFile);
+            Console.WriteLine(">>> entry hook restored.");
+        }
+        else Console.WriteLine("no state.");
+        return 0;
+    }
+
+    uint bits = BitConverter.SingleToUInt32Bits(float.Parse(val, System.Globalization.CultureInfo.InvariantCulture));
+    if (!engine.Model.Methods.TryGetValue(method, out var m)) { Console.WriteLine("method not found"); return 0; }
+    var origHead = engine.Mem!.ReadBytes((IntPtr)m.addr, 5);
+    System.IO.File.WriteAllText(stateFile, $"{m.addr:X} {Convert.ToHexString(origHead)}");
+
+    bool ok = engine.Injector!.HookEntryForce("mining", method, off, bits);
+    Console.WriteLine(ok
+        ? $">>> ENTRY-HOOKED {method}: writes pickSpeed={val} at entry. MINE NOW. `minewrite off` to undo."
+        : "hook failed (prologue not decodable or alloc failed)");
+    return 0; // persistent
+}
+
+if (mode == "minehook")
+{
+    using var engine = new TmlEngine();
+    engine.Log += Console.WriteLine;
+    engine.Attach();
+    IntPtr pb = IntPtr.Zero;
+    for (int i = 0; i < 60 && pb == IntPtr.Zero; i++) { pb = engine.PlayerBase(); if (pb == IntPtr.Zero) System.Threading.Thread.Sleep(500); }
+    if (pb == IntPtr.Zero) { Console.WriteLine("No world."); return 0; }
+
+    var methods = new[] { "ItemCheck_UseMiningTools_ActuallyUseMiningTool", "UseShovel", "PlaceThing_TryReplacingTiles" };
+    string stateFile = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "minehook.txt");
+    string val = args.Length > 1 ? args[1] : "0.1";
+
+    if (val == "off")
+    {
+        if (!System.IO.File.Exists(stateFile)) { Console.WriteLine("no saved hook state."); return 0; }
+        int n = 0;
+        foreach (var line in System.IO.File.ReadAllLines(stateFile))
+        {
+            var p = line.Split(' ');
+            if (p.Length != 2) continue;
+            IntPtr addr = (IntPtr)Convert.ToInt64(p[0], 16);
+            byte[] orig = Convert.FromHexString(p[1]);
+            if (engine.Mem!.WriteBytes(addr, orig)) n++;
+        }
+        System.IO.File.Delete(stateFile);
+        Console.WriteLine($">>> restored {n} mining load site(s).");
+        return 0;
+    }
+
+    var sites = engine.Injector!.FindLoadSites("pickSpeed", methods);
+    Console.WriteLine($"pickSpeed load sites in mining methods: {sites.Count}");
+    if (sites.Count == 0) { Console.WriteLine("no load sites — method names may differ"); return 0; }
+    // save originals for restore before patching
+    var lines = sites.Select(s => $"{s.ToInt64():X} {Convert.ToHexString(engine.Mem!.ReadBytes(s, 8))}").ToArray();
+    System.IO.File.WriteAllLines(stateFile, lines);
+
+    bool ok = engine.Injector!.HookUseSites("pickSpeed", float.Parse(val, System.Globalization.CultureInfo.InvariantCulture), methods);
+    Console.WriteLine(ok ? $">>> HOOKED pickSpeed -> {val}. Mine anytime; `minehook off` to undo (or restart game)." : "hook failed");
+    return 0; // persistent — leaves the hook active so you can test at leisure
+}
+
 if (mode == "injecttest")
 {
     using var engine = new TmlEngine();
@@ -96,15 +298,15 @@ if (mode == "injecttest")
     {
         var f = engine.Model!.PlayerFields.FirstOrDefault(x => x.Name == name);
         if (f == null) { Console.WriteLine($"  {name}: (no field)"); continue; }
-        var fr = engine.Injector!.FindReset(name);
-        if (fr.addr == IntPtr.Zero) { Console.WriteLine($"  {name,-14}: reset instruction NOT found"); continue; }
+        var sites = engine.Injector!.FindStores(name);
+        if (sites.Count == 0) { Console.WriteLine($"  {name,-14}: no store sites found"); continue; }
         try
         {
             engine.Injector!.Patch(name);
-            engine.WriteField(f, val);   // single write — must persist if reset is NOP'd
+            engine.WriteField(f, val);   // single write — must persist if all stores are NOP'd
             int held = 0;
             for (int s = 0; s < 15; s++) { System.Threading.Thread.Sleep(80); if (string.Equals(engine.ReadField(f), val, StringComparison.OrdinalIgnoreCase)) held++; }
-            Console.WriteLine($"  {name,-14}: held {held,2}/15 (len {fr.len}) NO re-write -> {(held >= 14 ? "INJECTION WORKS ✓" : "partial/fail")}");
+            Console.WriteLine($"  {name,-14}: {sites.Count} sites NOP'd, held {held,2}/15 NO re-write -> {(held >= 14 ? "WORKS ✓" : "partial/fail")}");
         }
         finally { engine.Injector!.Restore(name); }
     }
@@ -167,6 +369,14 @@ if (mode == "scanoff")
 if (mode == "scanall")
 {
     ClrDiscovery.ScanAllRefs(proc.Id, args.Length > 1 ? args[1] : "pickSpeed");
+    return 0;
+}
+
+if (mode == "dump")
+{
+    ClrDiscovery.DumpMethod(proc.Id, args.Length > 1 ? args[1] : "ItemCheck_UseMiningTools_ActuallyUseMiningTool",
+        args.Length > 2 ? Convert.ToInt32(args[2], 16) : 0,
+        args.Length > 3 ? Convert.ToInt32(args[3], 16) : 0x40);
     return 0;
 }
 

@@ -258,6 +258,81 @@ public sealed class TmlEngine : IDisposable
             : m.WriteInt32((IntPtr)(item.ToInt64() + off), value);
     }
 
+    // ---- fast mining/tools: lower the use-time of pickaxes/drills/axes/hammers ----
+    // Mining speed for a tool = its useTime/useAnimation. Setting them low = fast mining.
+    // Safe (plain item-field writes). Originals are snapshotted so disable restores them.
+
+    private readonly Dictionary<int, (int type, int useTime, int useAnim, int reuse)> _toolSnapshot = new();
+
+    public bool IsToolSlot(int slot)
+        => ItemInt(slot, "pick") > 0 || ItemInt(slot, "axe") > 0 || ItemInt(slot, "hammer") > 0;
+
+    /// <summary>Set every inventory mining tool to fast use-time (snapshotting originals once).</summary>
+    public int ApplyFastTools(int useTime, int useAnim)
+    {
+        if (Mem == null || PlayerBase() == IntPtr.Zero) return 0;
+        int n = 0;
+        for (int slot = 0; slot < 50; slot++)
+        {
+            int type = ItemInt(slot, "type");
+            if (type == 0 || !IsToolSlot(slot)) continue;
+            if (!_toolSnapshot.ContainsKey(slot) || _toolSnapshot[slot].type != type)
+                _toolSnapshot[slot] = (type, ItemInt(slot, "useTime"), ItemInt(slot, "useAnimation"), ItemInt(slot, "reuseDelay"));
+            SetItemInt(slot, "useTime", useTime);
+            SetItemInt(slot, "useAnimation", useAnim);
+            SetItemInt(slot, "reuseDelay", 0);
+            n++;
+        }
+        return n;
+    }
+
+    private int _selectedItemOff = -1;
+    private int SelectedItemOff => _selectedItemOff >= 0 ? _selectedItemOff
+        : (_selectedItemOff = Model?.PlayerFields.FirstOrDefault(f => f.Name == "selectedItem")?.Offset ?? 0x4C0);
+
+    /// <summary>Lightweight: force the currently-held tool's use-time low (call at high frequency,
+    /// because Calamity's HoldItem hook recomputes the held item's stats every frame).</summary>
+    public void AssertHeldTool(int useTime, int useAnim)
+    {
+        var m = Mem; var pb = PlayerBase();
+        if (m == null || pb == IntPtr.Zero) return;
+        int sel = m.ReadInt32((IntPtr)(pb.ToInt64() + SelectedItemOff));
+        if (sel < 0 || sel > 58) return;
+        if (ItemInt(sel, "type") == 0 || !IsToolSlot(sel)) return;
+        SetItemInt(sel, "useTime", useTime);
+        SetItemInt(sel, "useAnimation", useAnim);
+        SetItemInt(sel, "reuseDelay", 0);
+    }
+
+    /// <summary>High-frequency assert: write every cached tool slot's use-time (no scan).
+    /// Matches the verified diag behaviour (all tools, every 2ms).</summary>
+    public void AssertCachedTools(int useTime, int useAnim)
+    {
+        if (Mem == null || PlayerBase() == IntPtr.Zero || _toolSnapshot.Count == 0) return;
+        foreach (var slot in _toolSnapshot.Keys)
+        {
+            SetItemInt(slot, "useTime", useTime);
+            SetItemInt(slot, "useAnimation", useAnim);
+            SetItemInt(slot, "reuseDelay", 0);
+        }
+    }
+
+    /// <summary>Restore the original use-time on every tool we changed.</summary>
+    public void RestoreFastTools()
+    {
+        if (Mem != null && PlayerBase() != IntPtr.Zero)
+        {
+            foreach (var (slot, snap) in _toolSnapshot)
+            {
+                if (ItemInt(slot, "type") != snap.type) continue; // item changed; skip
+                SetItemInt(slot, "useTime", snap.useTime);
+                SetItemInt(slot, "useAnimation", snap.useAnim);
+                SetItemInt(slot, "reuseDelay", snap.reuse);
+            }
+        }
+        _toolSnapshot.Clear();
+    }
+
     /// <summary>Max-stack every inventory item (Item[] at inventoryOff).</summary>
     public int MaxStackInventory()
     {

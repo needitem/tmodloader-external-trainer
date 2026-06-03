@@ -15,8 +15,5 @@
 
   { "group": "🏃 Movement (code injection)", "desc": "Water Walking", "field": "waterWalk", "kind": "inject" },
 
-  { "group": "⛏️ Speed (high-frequency write)", "desc": "Instant Mining (pickSpeed→0.1)", "field": "pickSpeed", "kind": "fast", "value": "0.1" },
-  { "group": "⛏️ Speed (high-frequency write)", "desc": "Instant Wall Removal", "field": "wallSpeed", "kind": "fast", "value": "0.1" },
-  { "group": "⛏️ Speed (high-frequency write)", "desc": "Instant Tile Placement", "field": "tileSpeed", "kind": "fast", "value": "0.1" },
-  { "group": "⛏️ Speed (high-frequency write)", "desc": "Move Speed x3 (moveSpeed→3)", "field": "moveSpeed", "kind": "fast", "value": "3" }
+  { "group": "⛏️ Speed", "desc": "Fast Mining — all pickaxes/drills/axes/hammers (useTime→1)", "kind": "tools", "value": "1" }
 ]

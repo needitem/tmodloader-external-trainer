@@ -150,6 +150,30 @@ public sealed class ProcessMemory : IDisposable
 
     public void Free(IntPtr address) => VirtualFreeEx(_handle, address, IntPtr.Zero, MEM_RELEASE);
 
+    /// <summary>
+    /// Allocate within ±2GB of <paramref name="near"/> so a rip-relative disp32 can reach it.
+    /// Scans nearby pages because VirtualAllocEx(null) may land far away on x64.
+    /// </summary>
+    public IntPtr AllocNear(IntPtr near, int size, MemoryProtection protect = MemoryProtection.ReadWrite)
+    {
+        long target = near.ToInt64();
+        const long limit = 0x7FFF0000; // keep within signed 32-bit reach
+        for (long off = 0x10000; off < limit; off += 0x10000)
+        {
+            foreach (long cand in new[] { target - off, target + off })
+            {
+                if (cand <= 0x10000) continue;
+                long page = cand & ~0xFFFFL;
+                IntPtr p = VirtualAllocEx(_handle, (IntPtr)page, (IntPtr)size,
+                    AllocationType.Commit | AllocationType.Reserve, protect);
+                if (p == IntPtr.Zero) continue;
+                if (Math.Abs(p.ToInt64() - target) < limit) return p;
+                Free(p); // landed too far; release and keep looking
+            }
+        }
+        return IntPtr.Zero;
+    }
+
     public IntPtr Handle => _handle;
 
     public bool IsAlive()

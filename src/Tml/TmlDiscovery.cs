@@ -102,21 +102,40 @@ public static class TmlDiscovery
 
         if (itemType != null)
         {
-            foreach (var name in new[] { "type", "stack", "maxStack", "prefix", "netID", "favorited" })
+            foreach (var name in new[] { "type", "stack", "maxStack", "prefix", "netID", "favorited",
+                "useTime", "useAnimation", "useStyle", "pick", "axe", "hammer", "tileBoost", "reuseDelay" })
             {
                 var f = itemType.GetFieldByName(name);
                 if (f != null) model.ItemFields[name] = f.Offset + HeaderSize;
             }
         }
 
-        // Player.ResetEffects JIT address (target for NOP-the-reset code injection).
+        // Per-frame methods that write effect fields. NOP-injection scans all of these so
+        // every store of a target field (in ResetEffects, equips, armor sets, buffs) is removed.
+        var effectNames = new HashSet<string> { "ResetEffects", "UpdateEquips", "UpdateArmorSets", "UpdateBuffs" };
         foreach (var method in playerType.Methods)
         {
-            if (method.Name == "ResetEffects" && method.NativeCode != 0)
-            {
-                model.ResetEffectsAddr = method.NativeCode;
-                break;
-            }
+            if (method.NativeCode == 0 || !effectNames.Contains(method.Name)) continue;
+            if (method.Name == "ResetEffects") model.ResetEffectsAddr = method.NativeCode;
+            int size;
+            try { size = (int)method.HotColdInfo.HotSize; } catch { size = 0; }
+            if (size <= 0 || size > 0x20000) size = 0x3000;
+            model.EffectMethods.Add((method.NativeCode, size));
+        }
+
+        // Named methods we hook at the use-site (mining reads pickSpeed; movement reads moveSpeed).
+        var hookNames = new HashSet<string> {
+            "ItemCheck_UseMiningTools_ActuallyUseMiningTool", "UseShovel", "PlaceThing_TryReplacingTiles",
+            "Update", "UpdateEquips",
+        };
+        foreach (var method in playerType.Methods)
+        {
+            if (method.NativeCode == 0 || !hookNames.Contains(method.Name)) continue;
+            if (model.Methods.ContainsKey(method.Name)) continue;
+            int size;
+            try { size = (int)method.HotColdInfo.HotSize; } catch { size = 0; }
+            if (size <= 0 || size > 0x40000) size = 0x4000;
+            model.Methods[method.Name] = (method.NativeCode, size);
         }
 
         // Item/prefix name tables (Terraria.Lang) — gives localized names incl. modded items.

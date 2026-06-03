@@ -23,6 +23,10 @@ public sealed class TmlModel
     public ulong StaticPrefixNames;   // &Lang.prefix          (LocalizedText[] ref)
     public int LocalizedTextValueOff = 0x10; // LocalizedText._value (real offset)
     public ulong ResetEffectsAddr;           // Player.ResetEffects JIT code (for NOP injection)
+    // Per-frame methods that write effect fields; scanned to NOP every store of a field.
+    public List<(ulong addr, int size)> EffectMethods = new();
+    // Named method JIT addresses (+size) for use-site hooks (e.g. mining reads pickSpeed).
+    public Dictionary<string, (ulong addr, int size)> Methods = new();
     public List<TmlField> PlayerFields = new();
     public Dictionary<string, int> ItemFields = new();
 

@@ -95,6 +95,7 @@ public sealed class TmlForm : Form
                 case RowKind.Toggle: _engine.WriteField(r.Field!, "true"); break;
                 case RowKind.Inject: _engine.WriteField(r.Field!, r.InjectValue); break;
                 case RowKind.Fast: _engine.WriteField(r.Field!, r.InjectValue); break;
+                case RowKind.Tools: _engine.AssertCachedTools(int.TryParse(r.InjectValue, out var t) ? t : 1, 4); break;
             }
         }
     }
@@ -354,6 +355,8 @@ public sealed class TmlForm : Form
         RowKind.Toggle => "bool",
         RowKind.Inject => "inject",
         RowKind.Fast => "fast",
+        RowKind.UseHook => "hook",
+        RowKind.Tools => "tools",
         RowKind.Action => "",
         RowKind.Value => r.Field!.Kind switch
         {
@@ -415,6 +418,27 @@ public sealed class TmlForm : Form
                 // value on its own when we stop writing.
                 AppendLog($"{(r.Active ? "Enabled" : "Disabled")} {r.Desc}");
                 break;
+            case RowKind.Tools:
+                if (r.Active)
+                {
+                    int ut = int.TryParse(r.InjectValue, out var t) ? t : 1;
+                    AppendLog($"Fast tools on: {_engine.ApplyFastTools(ut, 4)} tool(s) sped up.");
+                }
+                else { _engine.RestoreFastTools(); AppendLog("Fast tools off (restored)."); }
+                break;
+            case RowKind.UseHook:
+                if (r.Active)
+                {
+                    float v = float.Parse(r.InjectValue, System.Globalization.CultureInfo.InvariantCulture);
+                    if (_engine.Injector!.HookUseSites(r.Field!.Name, v, r.Methods)) AppendLog($"Hooked use-site: {r.Desc}");
+                    else { r.Active = false; grow.Cells["active"].Value = false; AppendLog($"Use-site hook failed for {r.Desc}"); }
+                }
+                else
+                {
+                    _engine.Injector!.UnhookUseSites(r.Field!.Name);
+                    AppendLog($"Unhooked {r.Desc}");
+                }
+                break;
         }
     }
 
@@ -459,6 +483,8 @@ public sealed class TmlForm : Form
             if (r.Kind == RowKind.Buff) { r.Buff!.Enabled = false; _buffs.OnDisableBuff(_engine, r.Buff!); }
             else if (r.Kind == RowKind.Value) r.FrozenText = null;
             else if (r.Kind == RowKind.Inject) { _engine.Injector?.Restore(r.Field!.Name); }
+            else if (r.Kind == RowKind.UseHook) { _engine.Injector?.UnhookUseSites(r.Field!.Name); }
+            else if (r.Kind == RowKind.Tools) { _engine.RestoreFastTools(); }
         }
         foreach (DataGridViewRow gr in _grid.Rows)
             if (gr.Tag is CheatRow rr && rr.Kind != RowKind.GroupHeader)
@@ -492,6 +518,13 @@ public sealed class TmlForm : Form
             if (_engine.PlayerBase() == IntPtr.Zero) { _vitals.Text = "(load into a world)"; return; }
             _vitals.Text = VitalsText();
             _buffs.Tick(_engine); // buffs persist ~1h, slow tick is fine
+
+            // Fast-tools is asserted by the high-frequency writer (the held item is recomputed
+            // every frame by Calamity, so a slow write loses). The slow tick re-snapshots
+            // all tools so non-held ones are covered and disable can restore them.
+            foreach (var r in _rows)
+                if (r.Kind == RowKind.Tools && r.Active)
+                    _engine.ApplyFastTools(int.TryParse(r.InjectValue, out var t) ? t : 1, 4);
 
             if (_tabs.SelectedIndex == 1) { RefreshInvGrid(); return; }
             if (_tabs.SelectedIndex != 0) return;

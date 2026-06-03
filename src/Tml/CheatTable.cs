@@ -4,7 +4,7 @@ using TerrariaTrainer.Cheats;
 
 namespace TerrariaTrainer.Tml;
 
-public enum RowKind { GroupHeader, Value, Toggle, Buff, Action, Inject, Fast }
+public enum RowKind { GroupHeader, Value, Toggle, Buff, Action, Inject, Fast, UseHook, Tools }
 
 /// <summary>A single row in the Cheat-Engine-style table.</summary>
 public sealed class CheatRow
@@ -16,7 +16,8 @@ public sealed class CheatRow
     public BuffCheat? Buff;      // for Buff
     public bool Active;          // freeze (Value) / hold-true (Toggle) / enable (Buff)
     public string? FrozenText;   // value to assert while Active (Value rows)
-    public string InjectValue = "true"; // value written for Inject rows (e.g. "0.2" for pickSpeed)
+    public string InjectValue = "true"; // value written for Inject/Fast/UseHook rows
+    public string[] Methods = Array.Empty<string>(); // use-site methods to hook (UseHook rows)
 }
 
 internal sealed class TableEntryDto
@@ -26,6 +27,7 @@ internal sealed class TableEntryDto
     [JsonPropertyName("field")] public string Field { get; set; } = "";
     [JsonPropertyName("kind")] public string Kind { get; set; } = "value";
     [JsonPropertyName("value")] public string? Value { get; set; }
+    [JsonPropertyName("methods")] public string[]? Methods { get; set; }
 }
 
 /// <summary>
@@ -45,6 +47,14 @@ public static class CheatTable
         string? lastGroup = null;
         foreach (var d in dtos)
         {
+            // Inventory-wide cheats with no Player field.
+            if (d.Kind.Equals("tools", StringComparison.OrdinalIgnoreCase))
+            {
+                EmitGroup(rows, ref lastGroup, d.Group);
+                rows.Add(new CheatRow { Kind = RowKind.Tools, Group = d.Group, Desc = d.Desc, InjectValue = d.Value ?? "1" });
+                continue;
+            }
+
             if (!byName.TryGetValue(d.Field, out var field)) continue; // field absent -> skip
 
             RowKind kind;
@@ -54,12 +64,19 @@ public static class CheatTable
                 if (injector == null || !injector.CanInject(d.Field)) continue;
                 kind = RowKind.Inject;
             }
+            else if (d.Kind.Equals("usehook", StringComparison.OrdinalIgnoreCase))
+            {
+                // only offer it if we can find the value's load instruction(s) to redirect
+                if (injector == null || d.Methods == null || injector.FindLoadSites(d.Field, d.Methods).Count == 0) continue;
+                kind = RowKind.UseHook;
+            }
             else if (d.Kind.Equals("toggle", StringComparison.OrdinalIgnoreCase)) kind = RowKind.Toggle;
             else if (d.Kind.Equals("fast", StringComparison.OrdinalIgnoreCase)) kind = RowKind.Fast;
             else kind = RowKind.Value;
 
             EmitGroup(rows, ref lastGroup, d.Group);
-            rows.Add(new CheatRow { Kind = kind, Group = d.Group, Desc = d.Desc, Field = field, InjectValue = d.Value ?? "true" });
+            rows.Add(new CheatRow { Kind = kind, Group = d.Group, Desc = d.Desc, Field = field,
+                InjectValue = d.Value ?? "true", Methods = d.Methods ?? Array.Empty<string>() });
         }
 
         // ---- inventory action ----

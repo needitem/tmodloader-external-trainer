@@ -208,7 +208,7 @@ internal static class ClrDiscovery
         }
     }
 
-    /// <summary>Scan EVERY Player method's JIT code for references to a field offset (find all writers).</summary>
+    /// <summary>Find the UNIQUE store sites that write a field offset, across all Player methods.</summary>
     public static void ScanAllRefs(int pid, string fieldName)
     {
         using var dt = DataTarget.CreateSnapshotAndAttach(pid);
@@ -218,25 +218,47 @@ internal static class ClrDiscovery
         var f = playerType.GetFieldByName(fieldName);
         if (f == null) { Console.WriteLine($"{fieldName}: no field"); return; }
         int off = f.Offset + 8;
-        byte[] needle = BitConverter.GetBytes(off);
-        Console.WriteLine($"refs to {fieldName} (0x{off:X}) across Player methods:");
-        var seen = new HashSet<ulong>();
+        byte[] n = BitConverter.GetBytes(off);
+        Console.WriteLine($"UNIQUE store sites for {fieldName} (0x{off:X}):");
+
+        var stores = new SortedDictionary<ulong, string>();   // absolute addr -> desc
+        var methodAt = new SortedDictionary<ulong, string>(); // method start -> name
+        foreach (var method in playerType.Methods)
+            if (method.NativeCode != 0) methodAt[method.NativeCode] = method.Name;
+
+        var visited = new HashSet<ulong>();
         foreach (var method in playerType.Methods)
         {
-            ulong addr = method.NativeCode;
-            if (addr == 0 || !seen.Add(addr)) continue;
-            byte[] code = new byte[0x2000];
-            if (dt.DataReader.Read(addr, code) <= 0) continue;
-            for (int i = 4; i + 8 < code.Length; i++)
+            ulong baseAddr = method.NativeCode;
+            if (baseAddr == 0 || !visited.Add(baseAddr)) continue;
+            byte[] code = new byte[0x3000];
+            if (dt.DataReader.Read(baseAddr, code) <= 0) continue;
+            for (int i = 0; i + 8 < code.Length; i++)
             {
-                if (code[i] == needle[0] && code[i+1] == needle[1] && code[i+2] == needle[2] && code[i+3] == needle[3])
-                {
-                    // only report likely STORES (mov/vmovss to [reg+disp]) — opcode bytes just before disp
-                    string ctx = string.Join(" ", code.Skip(i - 4).Take(12).Select(b => b.ToString("X2")));
-                    Console.WriteLine($"   {method.Name,-30} +0x{i-4:X4}: {ctx}");
-                }
+                ulong abs = baseAddr + (ulong)i;
+                if (stores.ContainsKey(abs)) continue;
+                // float store: vmovss [rbx+off], xmmN  = C5 FA 11 (modrm&C7==0x83) <off>
+                if (code[i] == 0xC5 && code[i+1] == 0xFA && code[i+2] == 0x11 && (code[i+3] & 0xC7) == 0x83
+                    && code[i+4]==n[0] && code[i+5]==n[1] && code[i+6]==n[2] && code[i+7]==n[3])
+                    stores[abs] = "STORE vmovss [rbx+off],xmm" + ((code[i+3] >> 3) & 7);
+                // float load: vmovss xmmN, [rbx+off]  = C5 FA 10 (modrm&C7==0x83) <off>
+                if (code[i] == 0xC5 && code[i+1] == 0xFA && code[i+2] == 0x10 && (code[i+3] & 0xC7) == 0x83
+                    && code[i+4]==n[0] && code[i+5]==n[1] && code[i+6]==n[2] && code[i+7]==n[3])
+                    stores[abs] = "load  vmovss xmm" + ((code[i+3] >> 3) & 7) + ",[rbx+off]";
+                // byte store: mov byte [rbx+off], imm = C6 83 <off> ib
+                if (code[i] == 0xC6 && code[i+1] == 0x83 && code[i+2]==n[0] && code[i+3]==n[1] && code[i+4]==n[2] && code[i+5]==n[3])
+                    stores[abs] = $"mov byte [rbx+off],{code[i+6]:X2}";
+                // dword store: mov dword [rbx+off], imm = C7 83 <off> id
+                if (code[i] == 0xC7 && code[i+1] == 0x83 && code[i+2]==n[0] && code[i+3]==n[1] && code[i+4]==n[2] && code[i+5]==n[3])
+                    stores[abs] = $"mov dword [rbx+off],0x{BitConverter.ToInt32(code,i+6):X}";
             }
         }
+        foreach (var (abs, desc) in stores)
+        {
+            string m = methodAt.LastOrDefault(kv => kv.Key <= abs).Value ?? "?";
+            Console.WriteLine($"   0x{abs:X}  ({m}+0x{abs - methodAt.LastOrDefault(kv => kv.Key <= abs).Key:X})  {desc}");
+        }
+        Console.WriteLine($"total unique store sites: {stores.Count}");
     }
 
     private static List<(int pos, string bytes)> FindMovByteZero(byte[] code, int len, int targetOff)
@@ -258,6 +280,25 @@ internal static class ClrDiscovery
                 res.Add((i, string.Join(" ", code.Skip(i).Take(7).Select(b => b.ToString("X2")))));
         }
         return res;
+    }
+
+    public static void DumpMethod(int pid, string methodName, int from, int count)
+    {
+        using var dt = DataTarget.CreateSnapshotAndAttach(pid);
+        using var runtime = dt.ClrVersions.First().CreateRuntime();
+        var playerType = FindType(runtime, "Terraria.Player");
+        var m = playerType?.Methods.FirstOrDefault(x => x.Name == methodName && x.NativeCode != 0);
+        if (m == null) { Console.WriteLine($"{methodName}: not found"); return; }
+        ulong addr = m.NativeCode;
+        int size = 0; try { size = (int)m.HotColdInfo.HotSize; } catch { }
+        Console.WriteLine($"{methodName} @ 0x{addr:X} size=0x{size:X}");
+        byte[] code = new byte[from + count + 16];
+        dt.DataReader.Read(addr, code);
+        for (int i = from; i < from + count; i += 16)
+        {
+            var row = code.Skip(i).Take(16).Select(b => b.ToString("X2"));
+            Console.WriteLine($"  +0x{i:X4}: {string.Join(" ", row)}");
+        }
     }
 
     private static ClrType? FindType(ClrRuntime runtime, string name)
