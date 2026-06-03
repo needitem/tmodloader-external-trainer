@@ -99,6 +99,7 @@ public static class TmlDiscovery
         model.BuffTypeOff = OffsetOf(playerType, "buffType", model.BuffTypeOff);
         model.BuffTimeOff = OffsetOf(playerType, "buffTime", model.BuffTimeOff);
         model.InventoryOff = OffsetOf(playerType, "inventory", model.InventoryOff);
+        model.ArmorOff = OffsetOf(playerType, "armor", model.ArmorOff);
 
         if (itemType != null)
         {
@@ -147,6 +148,15 @@ public static class TmlDiscovery
         AddNamedMethod(runtime, model, "Terraria.Player", "Fishing_GetPowerMultiplier"); // ->high = strong fishing
         AddNamedMethod(runtime, model, "Terraria.Player", "HasNPCBannerBuff");           // ->true = all banner bonuses
 
+        AddNamedMethod(runtime, model, "Terraria.ModLoader.ItemLoader", "ConsumeItem");          // ->false = infinite consumables
+        AddNamedMethod(runtime, model, "Terraria.ModLoader.CombinedHooks", "CanConsumeAmmo");    // ->false = infinite ammo
+        AddNamedMethod(runtime, model, "Terraria.ModLoader.CombinedHooks", "CanConsumeBait");    // ->false = infinite bait
+
+        // Overload sets we patch as a group (god mode = all Hurt overloads; infinite mana = all CheckMana).
+        AddMethodSet(runtime, model, "Terraria.Player", "Hurt");        // patch all -> return 0 => take no damage
+        AddMethodSet(runtime, model, "Terraria.Player", "CheckMana");   // patch all -> return true => infinite mana/no cost
+        AddMethodSet(runtime, model, "Terraria.Player", "ItemCheck_PayMana"); // belt-and-suspenders for mana cost
+
         // Item/prefix name tables (Terraria.Lang) — gives localized names incl. modded items.
         var langType = FindType(runtime, "Terraria.Lang");
         var ltType = FindType(runtime, "Terraria.Localization.LocalizedText");
@@ -185,6 +195,24 @@ public static class TmlDiscovery
         if (size <= 0 || size > 0x40000) size = 0x1000;
         string shortType = typeName.Contains('.') ? typeName[(typeName.LastIndexOf('.') + 1)..] : typeName;
         model.Methods[$"{shortType}.{methodName}"] = (m.NativeCode, size);
+    }
+
+    /// <summary>Collect EVERY JIT-compiled overload of a method name into model.MethodSets["Type.Method"].</summary>
+    private static void AddMethodSet(ClrRuntime runtime, TmlModel model, string typeName, string methodName)
+    {
+        var t = FindType(runtime, typeName);
+        if (t == null) return;
+        var list = new List<(ulong addr, int size)>();
+        foreach (var m in t.Methods)
+        {
+            if (m.Name != methodName || m.NativeCode == 0) continue;
+            int size; try { size = (int)m.HotColdInfo.HotSize; } catch { size = 0; }
+            if (size <= 0 || size > 0x40000) size = 0x1000;
+            list.Add((m.NativeCode, size));
+        }
+        if (list.Count == 0) return;
+        string shortType = typeName.Contains('.') ? typeName[(typeName.LastIndexOf('.') + 1)..] : typeName;
+        model.MethodSets[$"{shortType}.{methodName}"] = list;
     }
 
     private static int OffsetOf(ClrType t, string name, int fallback)

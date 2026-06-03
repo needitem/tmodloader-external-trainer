@@ -312,6 +312,48 @@ public sealed class CodeInjector
 
     public bool CanPatch(string methodKey) => _model.Methods.ContainsKey(methodKey);
 
+    // ---- method-set patches (patch every overload of a name at once) ----
+    private readonly Dictionary<string, List<(IntPtr entry, byte[] orig)>> _setHooks = new();
+
+    public bool CanPatchSet(string setKey) =>
+        _model.MethodSets.TryGetValue(setKey, out var l) && l.Count > 0;
+
+    /// <summary>Patch every overload in a method set so it immediately returns (code = return stub).</summary>
+    public int PatchSetReturn(string setKey, byte[] code)
+    {
+        if (_setHooks.ContainsKey(setKey)) return _setHooks[setKey].Count;
+        if (!_model.MethodSets.TryGetValue(setKey, out var addrs) || addrs.Count == 0) return 0;
+        var saved = new List<(IntPtr, byte[])>();
+        var suspended = SuspendTargetThreads();
+        try
+        {
+            foreach (var (addr, _) in addrs)
+            {
+                IntPtr entry = (IntPtr)addr;
+                var orig = _mem.ReadBytes(entry, code.Length);
+                _mem.WriteBytes(entry, code);
+                FlushInstructionCache(_mem.Handle, entry, (IntPtr)code.Length);
+                saved.Add((entry, orig));
+            }
+        }
+        finally { foreach (var h in suspended) { ResumeThread(h); CloseHandle(h); } }
+        _setHooks[setKey] = saved;
+        return saved.Count;
+    }
+
+    public void UnpatchSet(string setKey)
+    {
+        if (!_setHooks.TryGetValue(setKey, out var saved)) return;
+        var suspended = SuspendTargetThreads();
+        try { foreach (var (entry, orig) in saved) { _mem.WriteBytes(entry, orig); FlushInstructionCache(_mem.Handle, entry, (IntPtr)orig.Length); } }
+        finally { foreach (var h in suspended) { ResumeThread(h); CloseHandle(h); } }
+        _setHooks.Remove(setKey);
+    }
+
+    // return-stubs: universal-zero clears eax AND xmm0 (covers int/bool/float/double returns)
+    public int PatchSetReturnZero(string key) => PatchSetReturn(key, new byte[] { 0x31, 0xC0, 0x0F, 0x57, 0xC0, 0xC3 }); // xor eax,eax; xorps xmm0,xmm0; ret
+    public int PatchSetReturnTrue(string key) => PatchSetReturn(key, new byte[] { 0xB8, 0x01, 0x00, 0x00, 0x00, 0xC3 }); // mov eax,1; ret
+
     // ---- inventory accessories: run ApplyEquipFunctional() on every inventory accessory ----
     // Injects an asm loop at UpdateEquips' entry (rcx = this) that, for each inventory item
     // with item.accessory == true, calls player.ApplyEquipFunctional(item, hideVisual=true).
@@ -417,6 +459,119 @@ public sealed class CodeInjector
     }
 
     public void UnhookInventoryAccessories() => UnhookEntry("invAccessories");
+
+    /// <summary>
+    /// Make the 7 vanity/social accessory slots (armor[13..19]) grant their FUNCTIONAL
+    /// effects by calling ApplyEquipFunctional on each non-null item from a cave at
+    /// UpdateEquips' entry. Unlike the inventory hook there is no accessory check: vanity
+    /// slots only ever hold accessories, so every non-null item is applied (also covers
+    /// modded/Calamity effects via ApplyEquipFunctional's internal mod hooks).
+    /// </summary>
+    public bool HookVanityAccessories()
+    {
+        const string KEY = "vanityAccessories";
+        if (_entryHooks.ContainsKey(KEY)) return true;
+        if (!_model.Methods.TryGetValue("UpdateEquips", out var ue) || ue.addr == 0) return false;
+        if (!_model.Methods.TryGetValue("ApplyEquipFunctional", out var apply) || apply.addr == 0) return false;
+        int armorOff = _model.ArmorOff;
+        int noFallOff = _model.PlayerFields.FirstOrDefault(f => f.Name == "noFallDmg")?.Offset ?? 0;
+
+        IntPtr entry = (IntPtr)ue.addr;
+        var head = _mem.ReadBytes(entry, 16);
+        int disp = PrologueLen(head, 5);
+        if (disp < 5) return false;
+
+        IntPtr cave = _mem.AllocNear(entry, 0x200, MemoryProtection.ExecuteReadWrite);
+        if (cave == IntPtr.Zero) return false;
+
+        var b = new List<byte>();
+        var labels = new Dictionary<string, int>();
+        var rel32 = new List<(int pos, string label)>();
+        var abs32 = new List<(int pos, ulong target)>();
+        void E(params byte[] x) => b.AddRange(x);
+        void U32(int v) => b.AddRange(BitConverter.GetBytes(v));
+        void L(string n) => labels[n] = b.Count;
+        void JccNear(byte cc, string lbl) { E(0x0F, cc); rel32.Add((b.Count, lbl)); U32(0); }
+        void JmpNear(string lbl) { E(0xE9); rel32.Add((b.Count, lbl)); U32(0); }
+        void CallAbs(ulong target) { E(0xE8); abs32.Add((b.Count, target)); U32(0); }
+        void JmpAbs(ulong target) { E(0xE9); abs32.Add((b.Count, target)); U32(0); }
+        void IncAbs(ulong target) { E(0xFF, 0x05); abs32.Add((b.Count, target)); U32(0); }
+        ulong ENTRYCNT = (ulong)(cave.ToInt64() + 0x1F0), CALLCNT = (ulong)(cave.ToInt64() + 0x1F4);
+        ulong PLAYERPTR = (ulong)(cave.ToInt64() + 0x1E0);
+        ulong FLAGCAP = (ulong)(cave.ToInt64() + 0x1D4); // last live frame's noFallDmg after our applies
+
+        IncAbs(ENTRYCNT);
+
+        // save
+        E(0x50, 0x51, 0x52);                 // push rax, rcx, rdx
+        E(0x41, 0x50, 0x41, 0x51, 0x41, 0x52, 0x41, 0x53); // push r8,r9,r10,r11
+        E(0x53, 0x56, 0x57, 0x41, 0x54);     // push rbx, rsi, rdi, r12
+
+        E(0x48, 0x8B, 0xD9);                 // mov rbx, rcx   (this player)
+        E(0x48, 0x89, 0x1D); abs32.Add((b.Count, PLAYERPTR)); U32(0); // mov [rip+PLAYERPTR], rbx
+        E(0x48, 0x8B, 0xB3); U32(armorOff);  // mov rsi, [rbx+armorOff]   (armor Item[])
+        E(0x48, 0x85, 0xF6);                 // test rsi, rsi
+        JccNear(0x84, "VDONE");              // je VDONE
+        E(0x41, 0xBC, 0x0D, 0x00, 0x00, 0x00); // mov r12d, 13   (first vanity accessory slot)
+        L("LOOP");
+        E(0x49, 0x83, 0xFC, 0x14);           // cmp r12, 20
+        JccNear(0x8D, "VDONE");              // jge VDONE
+        E(0x4A, 0x8B, 0x7C, 0xE6, 0x10);     // mov rdi, [rsi+r12*8+0x10]  (armor[r12])
+        E(0x48, 0x85, 0xFF);                 // test rdi, rdi
+        JccNear(0x84, "NEXT");               // je NEXT
+        IncAbs(CALLCNT);                     // count each vanity item we apply
+        E(0x48, 0x8B, 0xCB);                 // mov rcx, rbx   (this)
+        E(0x48, 0x8B, 0xD7);                 // mov rdx, rdi   (item)
+        E(0x41, 0xB8, 0x01, 0x00, 0x00, 0x00); // mov r8d, 1   (hideVisual)
+        E(0x53, 0x56, 0x57, 0x41, 0x54);     // push rbx, rsi, rdi, r12
+        E(0x48, 0x83, 0xEC, 0x20);           // sub rsp, 0x20  (shadow space)
+        CallAbs(apply.addr);                 // call ApplyEquipFunctional
+        E(0x48, 0x83, 0xC4, 0x20);           // add rsp, 0x20
+        E(0x41, 0x5C, 0x5F, 0x5E, 0x5B);     // pop r12, rdi, rsi, rbx
+        L("NEXT");
+        E(0x49, 0xFF, 0xC4);                 // inc r12
+        JmpNear("LOOP");
+        L("VDONE");
+        // capture noFallDmg from this player (rbx still valid) into FLAGCAP for off-frame inspection
+        if (noFallOff > 0)
+        {
+            E(0x0F, 0xB6, 0x83); U32(noFallOff);  // movzx eax, byte [rbx+noFallOff]
+            E(0x88, 0x05); abs32.Add((b.Count, FLAGCAP)); U32(0); // mov [rip+FLAGCAP], al
+        }
+        // restore (reverse)
+        E(0x41, 0x5C, 0x5F, 0x5E, 0x5B);     // pop r12, rdi, rsi, rbx
+        E(0x41, 0x5B, 0x41, 0x5A, 0x41, 0x59, 0x41, 0x58); // pop r11,r10,r9,r8
+        E(0x5A, 0x59, 0x58);                 // pop rdx, rcx, rax
+        b.AddRange(head.Take(disp));         // displaced prologue
+        JmpAbs((ulong)(entry.ToInt64() + disp));
+
+        var code = b.ToArray();
+        foreach (var (pos, lbl) in rel32)
+            BitConverter.GetBytes(labels[lbl] - (pos + 4)).CopyTo(code, pos);
+        foreach (var (pos, target) in abs32)
+            BitConverter.GetBytes((int)((long)target - (cave.ToInt64() + pos + 4))).CopyTo(code, pos);
+        _mem.WriteBytes(cave, code);
+        _mem.WriteBytes((IntPtr)(cave.ToInt64() + 0x1D0), new byte[0x30]); // zero counter/capture slots (AllocNear may reuse leaked region)
+
+        var patch = new byte[disp];
+        patch[0] = 0xE9;
+        BitConverter.GetBytes((int)(cave.ToInt64() - (entry.ToInt64() + 5))).CopyTo(patch, 1);
+        for (int k = 5; k < disp; k++) patch[k] = 0x90;
+
+        var suspended = SuspendTargetThreads();
+        try { _mem.WriteBytes(entry, patch); FlushInstructionCache(_mem.Handle, entry, (IntPtr)disp); }
+        finally { foreach (var h in suspended) { ResumeThread(h); CloseHandle(h); } }
+
+        _entryHooks[KEY] = (entry, head.Take(disp).ToArray(), cave);
+        return true;
+    }
+
+    public void UnhookVanityAccessories() => UnhookEntry("vanityAccessories");
+
+    /// <summary>True if we have the methods needed to install the vanity-accessory hook.</summary>
+    public bool CanHookVanity() =>
+        _model.Methods.TryGetValue("UpdateEquips", out var ue) && ue.addr != 0 &&
+        _model.Methods.TryGetValue("ApplyEquipFunctional", out var ap) && ap.addr != 0;
 
     /// <summary>Cave base for an entry hook (diagnostics: counters live at cave+0x1F0/0x1F4).</summary>
     public IntPtr EntryCave(string key) => _entryHooks.TryGetValue(key, out var h) ? h.cave : IntPtr.Zero;

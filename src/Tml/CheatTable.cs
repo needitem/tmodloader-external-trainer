@@ -4,7 +4,7 @@ using TerrariaTrainer.Cheats;
 
 namespace TerrariaTrainer.Tml;
 
-public enum RowKind { GroupHeader, Value, Toggle, Buff, Action, Inject, Fast, UseHook, Tools, Craft, Patch }
+public enum RowKind { GroupHeader, Value, Toggle, Buff, Action, Inject, Fast, UseHook, Tools, Craft, Patch, Vanity, PatchSet }
 
 /// <summary>A single row in the Cheat-Engine-style table.</summary>
 public sealed class CheatRow
@@ -60,6 +60,24 @@ public static class CheatTable
             {
                 EmitGroup(rows, ref lastGroup, d.Group);
                 rows.Add(new CheatRow { Kind = RowKind.Craft, Group = d.Group, Desc = d.Desc });
+                continue;
+            }
+            if (d.Kind.Equals("patchset", StringComparison.OrdinalIgnoreCase))
+            {
+                // d.Method holds "SetKey:ret;SetKey:ret" (ret = zero|true). Include if ANY set is present.
+                if (injector == null || d.Method == null) continue;
+                var specs = d.Method.Split(';', StringSplitOptions.RemoveEmptyEntries);
+                bool any = specs.Any(s => injector.CanPatchSet(s.Split(':')[0]));
+                if (!any) continue;
+                EmitGroup(rows, ref lastGroup, d.Group);
+                rows.Add(new CheatRow { Kind = RowKind.PatchSet, Group = d.Group, Desc = d.Desc, PatchMethod = d.Method });
+                continue;
+            }
+            if (d.Kind.Equals("vanity", StringComparison.OrdinalIgnoreCase))
+            {
+                if (injector == null || !injector.CanHookVanity()) continue; // methods absent -> skip
+                EmitGroup(rows, ref lastGroup, d.Group);
+                rows.Add(new CheatRow { Kind = RowKind.Vanity, Group = d.Group, Desc = d.Desc });
                 continue;
             }
             if (d.Kind.Equals("patch", StringComparison.OrdinalIgnoreCase))

@@ -244,6 +244,249 @@ if (mode == "invacc")
     return 0;
 }
 
+if (mode == "sets")
+{
+    using var engine = new TmlEngine();
+    engine.Log += Console.WriteLine;
+    engine.Attach();
+    foreach (var kv in engine.Model!.MethodSets)
+        Console.WriteLine($"{kv.Key}: {kv.Value.Count} overload(s) -> {string.Join(", ", kv.Value.Select(v => $"0x{v.addr:X}"))}");
+    return 0;
+}
+
+if (mode == "setpatch")
+{
+    using var engine = new TmlEngine();
+    engine.Log += Console.WriteLine;
+    engine.Attach();
+    IntPtr pb = IntPtr.Zero;
+    for (int i = 0; i < 40 && pb == IntPtr.Zero; i++) { pb = engine.PlayerBase(); if (pb == IntPtr.Zero) System.Threading.Thread.Sleep(500); }
+    string key = args.Length > 1 ? args[1] : "Player.Hurt";
+    string act = args.Length > 2 ? args[2] : "zero";
+    var inj = engine.Injector!;
+    if (act == "off") { inj.UnpatchSet(key); Console.WriteLine($"unpatched {key}"); return 0; }
+    int n = act == "true" ? inj.PatchSetReturnTrue(key) : inj.PatchSetReturnZero(key);
+    Console.WriteLine($"patched {n} overload(s) of {key} -> return {act}");
+    // liveness check: game shouldn't crash
+    int mcOff = engine.Model!.PlayerFields.First(f => f.Name == "miscCounter").Offset;
+    int a = pb != IntPtr.Zero ? engine.Mem!.ReadInt32((IntPtr)(pb.ToInt64()+mcOff)) : 0;
+    System.Threading.Thread.Sleep(1500);
+    int b2 = pb != IntPtr.Zero ? engine.Mem!.ReadInt32((IntPtr)(pb.ToInt64()+mcOff)) : 0;
+    Console.WriteLine($"miscCounter {a} -> {b2} ({(a!=b2 ? "game LIVE, no crash" : "paused/unfocused")})");
+    Console.WriteLine("(patch persists until 'setpatch <key> off' or game restart)");
+    return 0;
+}
+
+if (mode == "freeze")
+{
+    using var engine = new TmlEngine();
+    engine.Log += Console.WriteLine;
+    engine.Attach();
+    IntPtr pb = IntPtr.Zero;
+    for (int i = 0; i < 40 && pb == IntPtr.Zero; i++) { pb = engine.PlayerBase(); if (pb == IntPtr.Zero) System.Threading.Thread.Sleep(500); }
+    if (pb == IntPtr.Zero) { Console.WriteLine("No world."); return 0; }
+    var m = engine.Mem!;
+    // args: freeze <field>=<val>[,<field>=<val>...] <seconds>
+    var pairs = (args.Length > 1 ? args[1] : "rocketTime=0").Split(',');
+    int secs = args.Length > 2 ? int.Parse(args[2]) : 25;
+    var specs = pairs.Select(p => { var kv = p.Split('='); var f = engine.Model!.PlayerFields.First(x => x.Name == kv[0]); return (off: f.Offset, val: int.Parse(kv[1]), name: kv[0]); }).ToList();
+    Console.WriteLine($"Freezing {string.Join(", ", specs.Select(s => $"{s.name}={s.val}"))} for {secs}s. TEST NOW.");
+    for (int k = 0; k < secs * 20; k++)
+    {
+        foreach (var s in specs) m.WriteInt32((IntPtr)(pb.ToInt64() + s.off), s.val);
+        System.Threading.Thread.Sleep(50);
+    }
+    Console.WriteLine("done (values released).");
+    return 0;
+}
+
+if (mode == "breathtest")
+{
+    using var engine = new TmlEngine();
+    engine.Log += Console.WriteLine;
+    engine.Attach();
+    IntPtr pb = IntPtr.Zero;
+    for (int i = 0; i < 40 && pb == IntPtr.Zero; i++) { pb = engine.PlayerBase(); if (pb == IntPtr.Zero) System.Threading.Thread.Sleep(500); }
+    if (pb == IntPtr.Zero) { Console.WriteLine("No world."); return 0; }
+    var m = engine.Mem!;
+    int bo = engine.Model!.PlayerFields.First(f => f.Name == "breath").Offset;
+    int bmo = engine.Model!.PlayerFields.First(f => f.Name == "breathMax").Offset;
+    int ro = engine.Model!.PlayerFields.First(f => f.Name == "rocketTime").Offset;
+    int rmo = engine.Model!.PlayerFields.First(f => f.Name == "rocketTimeMax").Offset;
+    Console.WriteLine("Continuously freezing breath=high & rocketTime=high for 30s. Go UNDERWATER & use ROCKET BOOTS to test.");
+    for (int k = 0; k < 600; k++)
+    {
+        m.WriteInt32((IntPtr)(pb.ToInt64()+bo), 65000);
+        m.WriteInt32((IntPtr)(pb.ToInt64()+ro), 65000);
+        if (k % 40 == 0)
+            Console.WriteLine($"  breath={m.ReadInt32((IntPtr)(pb.ToInt64()+bo))}/{m.ReadInt32((IntPtr)(pb.ToInt64()+bmo))} rocketTime={m.ReadInt32((IntPtr)(pb.ToInt64()+ro))}/{m.ReadInt32((IntPtr)(pb.ToInt64()+rmo))}");
+        System.Threading.Thread.Sleep(50);
+    }
+    Console.WriteLine("done.");
+    return 0;
+}
+
+if (mode == "live")
+{
+    using var engine = new TmlEngine();
+    engine.Log += Console.WriteLine;
+    engine.Attach();
+    IntPtr pb = IntPtr.Zero;
+    for (int i = 0; i < 40 && pb == IntPtr.Zero; i++) { pb = engine.PlayerBase(); if (pb == IntPtr.Zero) System.Threading.Thread.Sleep(500); }
+    if (pb == IntPtr.Zero) { Console.WriteLine("No world."); return 0; }
+    var m = engine.Mem!;
+    int mc = engine.Model!.PlayerFields.First(f => f.Name == "miscCounter").Offset;
+    Console.WriteLine("miscCounter over 1.5s (changes => game loop running):");
+    for (int k = 0; k < 6; k++) { Console.WriteLine($"  miscCounter={m.ReadInt32((IntPtr)(pb.ToInt64() + mc))}"); System.Threading.Thread.Sleep(250); }
+    return 0;
+}
+
+if (mode == "vanslots")
+{
+    using var engine = new TmlEngine();
+    engine.Log += Console.WriteLine;
+    engine.Attach();
+    IntPtr pb = IntPtr.Zero;
+    for (int i = 0; i < 40 && pb == IntPtr.Zero; i++) { pb = engine.PlayerBase(); if (pb == IntPtr.Zero) System.Threading.Thread.Sleep(500); }
+    if (pb == IntPtr.Zero) { Console.WriteLine("No world."); return 0; }
+    var m = engine.Mem!;
+    int armorOff = engine.Model!.ArmorOff;
+    IntPtr armorArr = m.ReadPtr64((IntPtr)(pb.ToInt64() + armorOff));
+    int tOff = engine.Model!.ItemType, pkOff = engine.Model!.ItemFields["pick"], accOff = engine.Model!.ItemFields["accessory"];
+    Console.WriteLine($"armor[] @0x{armorArr.ToInt64():X}  (slots 3-9=functional accessory, 13-19=vanity accessory)");
+    for (int s = 0; s < 20; s++)
+    {
+        IntPtr it = m.ReadPtr64((IntPtr)(armorArr.ToInt64() + 0x10 + s * 8));
+        if (it == IntPtr.Zero) { Console.WriteLine($"  [{s,2}] <null ptr>"); continue; }
+        int t = m.ReadInt32((IntPtr)(it.ToInt64() + tOff));
+        int acc = m.ReadByte((IntPtr)(it.ToInt64() + accOff));
+        Console.WriteLine($"  [{s,2}] type={t,5} acc={acc} \"{engine.ItemName(t)}\"");
+    }
+    return 0;
+}
+
+if (mode == "vantest")
+{
+    using var engine = new TmlEngine();
+    engine.Log += Console.WriteLine;
+    engine.Attach();
+    IntPtr pb = IntPtr.Zero;
+    for (int i = 0; i < 40 && pb == IntPtr.Zero; i++) { pb = engine.PlayerBase(); if (pb == IntPtr.Zero) System.Threading.Thread.Sleep(500); }
+    if (pb == IntPtr.Zero) { Console.WriteLine("No world."); return 0; }
+    var m = engine.Mem!;
+    string[] flags = { "noFallDmg", "waterWalk", "fireWalk", "iceSkate", "gills" };
+    int Off(string n) => engine.Model!.PlayerFields.First(f => f.Name == n).Offset;
+    int mcOff = Off("miscCounter");
+    int MC() => m.ReadInt32((IntPtr)(pb.ToInt64() + mcOff));
+    bool RB(string n) => m.ReadByte((IntPtr)(pb.ToInt64() + Off(n))) != 0;
+    void Dump(string tag) => Console.WriteLine($"  {tag} (mc={MC()}): " + string.Join("  ", flags.Select(f => $"{f}={RB(f)}")));
+    bool WaitLive(int ticks) { int start = MC(); for (int w = 0; w < 100; w++) { if (Math.Abs(MC() - start) >= ticks) return true; System.Threading.Thread.Sleep(50); } return false; }
+    bool WaitLiveLong(int ticks) { int start = MC(); for (int w = 0; w < 600; w++) { if (Math.Abs(MC() - start) >= ticks) return true; System.Threading.Thread.Sleep(50); } return false; }
+
+    Console.WriteLine("Waiting up to 30s for the game loop to run — FOCUS the game & walk around now...");
+    if (!WaitLiveLong(2)) { Console.WriteLine(">>> GAME STAYED PAUSED (miscCounter frozen the whole time). <<<"); return 0; }
+    Console.WriteLine("game loop is LIVE. BEFORE hook (vanity flags expected false):");
+    for (int k = 0; k < 3; k++) { Dump($"t{k}"); WaitLive(2); }
+    bool ok = engine.Injector!.HookVanityAccessories();
+    IntPtr cave = engine.Injector!.EntryCave("vanityAccessories");
+    Console.WriteLine($"HookVanityAccessories ok={ok}");
+    WaitLive(3);
+    Console.WriteLine("AFTER hook (should be true if ApplyEquipFunctional applied):");
+    for (int k = 0; k < 4; k++) { Dump($"t{k}"); WaitLive(2); }
+    Console.WriteLine($"  cave saw player    = 0x{m.ReadInt64((IntPtr)(cave.ToInt64() + 0x1E0)):X}");
+    Console.WriteLine($"  actual local player= 0x{pb.ToInt64():X}");
+    Console.WriteLine($"  entries={m.ReadInt32((IntPtr)(cave.ToInt64()+0x1F0))} calls={m.ReadInt32((IntPtr)(cave.ToInt64()+0x1F4))}");
+    engine.Injector!.UnhookVanityAccessories();
+    Console.WriteLine("restored.");
+    return 0;
+}
+
+if (mode == "vanhook")
+{
+    using var engine = new TmlEngine();
+    engine.Log += Console.WriteLine;
+    engine.Attach();
+    IntPtr pb = IntPtr.Zero;
+    for (int i = 0; i < 40 && pb == IntPtr.Zero; i++) { pb = engine.PlayerBase(); if (pb == IntPtr.Zero) System.Threading.Thread.Sleep(500); }
+    if (pb == IntPtr.Zero) { Console.WriteLine("No world."); return 0; }
+    string sub = args.Length > 1 ? args[1] : "on";
+    string stateFile = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "vanhook.txt");
+    var m = engine.Mem!;
+
+    if (sub == "off")
+    {
+        if (!System.IO.File.Exists(stateFile)) { Console.WriteLine("no state."); return 0; }
+        var p = System.IO.File.ReadAllText(stateFile).Split(' ');
+        m.WriteBytes((IntPtr)Convert.ToInt64(p[0], 16), Convert.FromHexString(p[1]));
+        System.IO.File.Delete(stateFile);
+        Console.WriteLine(">>> restored UpdateEquips.");
+        return 0;
+    }
+
+    if (sub == "cap")
+    {
+        if (!System.IO.File.Exists(stateFile)) { Console.WriteLine("not hooked (run 'vanhook on' first)."); return 0; }
+        var p = System.IO.File.ReadAllText(stateFile).Split(' ');
+        IntPtr c = (IntPtr)Convert.ToInt64(p[2], 16);
+        Console.WriteLine($"entries={m.ReadInt32((IntPtr)(c.ToInt64()+0x1F0))} calls={m.ReadInt32((IntPtr)(c.ToInt64()+0x1F4))}");
+        Console.WriteLine($"captured noFallDmg (last live frame, after our applies) = {m.ReadByte((IntPtr)(c.ToInt64()+0x1D4))}  (1 => ApplyEquipFunctional worked!)");
+        return 0;
+    }
+
+    if (sub == "watch")
+    {
+        // (re)install fresh, then poll for 60s. Prints only when the game loop advances.
+        engine.Injector!.UnhookVanityAccessories();
+        bool okw = engine.Injector!.HookVanityAccessories();
+        IntPtr c = engine.Injector!.EntryCave("vanityAccessories");
+        System.IO.File.WriteAllText(stateFile, $"{engine.Model!.Methods["UpdateEquips"].addr:X} {Convert.ToHexString(m.ReadBytes((IntPtr)engine.Model!.Methods["UpdateEquips"].addr, 8))} {c.ToInt64():X}");
+        int mcOff = engine.Model!.PlayerFields.First(f => f.Name == "miscCounter").Offset;
+        int noFallOff = engine.Model!.PlayerFields.First(f => f.Name == "noFallDmg").Offset;
+        int waterOff = engine.Model!.PlayerFields.First(f => f.Name == "waterWalk").Offset;
+        Console.WriteLine($"hook ok={okw} cave=0x{c.ToInt64():X}. PLAY (focus game, move) — logging live frames for 60s:");
+        int prevMc = -1, liveCount = 0;
+        for (int k = 0; k < 240; k++)
+        {
+            IntPtr pbn = engine.PlayerBase();
+            int mc = pbn == IntPtr.Zero ? prevMc : m.ReadInt32((IntPtr)(pbn.ToInt64() + mcOff));
+            if (mc != prevMc && pbn != IntPtr.Zero)
+            {
+                liveCount++;
+                if (liveCount % 4 == 1)
+                    Console.WriteLine($"  LIVE mc={mc} entries={m.ReadInt32((IntPtr)(c.ToInt64()+0x1F0))} calls={m.ReadInt32((IntPtr)(c.ToInt64()+0x1F4))} capturedNoFall={m.ReadByte((IntPtr)(c.ToInt64()+0x1D4))} liveNoFall={m.ReadByte((IntPtr)(pbn.ToInt64()+noFallOff))} liveWaterWalk={m.ReadByte((IntPtr)(pbn.ToInt64()+waterOff))}");
+            }
+            prevMc = mc;
+            System.Threading.Thread.Sleep(250);
+        }
+        Console.WriteLine($"done. live frames seen={liveCount} (0 => game stayed paused the whole time).");
+        return 0;
+    }
+
+    var ue = engine.Model!.Methods["UpdateEquips"];
+    int armorOff = engine.Model!.ArmorOff;
+    Console.WriteLine($"UpdateEquips @0x{ue.addr:X}  armorOff=0x{armorOff:X}");
+    var orig = m.ReadBytes((IntPtr)ue.addr, 8);
+    bool ok = engine.Injector!.HookVanityAccessories();
+    IntPtr caveAddr = engine.Injector!.EntryCave("vanityAccessories");
+    System.IO.File.WriteAllText(stateFile, $"{ue.addr:X} {Convert.ToHexString(orig)} {caveAddr.ToInt64():X}");
+    Console.WriteLine($"hook ok={ok}, cave=0x{caveAddr.ToInt64():X}");
+    Console.WriteLine($"  entry after: {Convert.ToHexString(m.ReadBytes((IntPtr)ue.addr, 8))} (E9=patched)");
+    Console.WriteLine($"  cave bytes : {Convert.ToHexString(m.ReadBytes(caveAddr, 16))} (5051=ok)");
+    // how many vanity-accessory slots (armor[13..19]) hold an item, per our offset
+    IntPtr armorArr = m.ReadPtr64((IntPtr)(pb.ToInt64() + armorOff));
+    int vanCount = 0;
+    for (int s = 13; s < 20; s++)
+    {
+        IntPtr it = m.ReadPtr64((IntPtr)(armorArr.ToInt64() + 0x10 + s * 8));
+        if (it != IntPtr.Zero) { int t = m.ReadInt32((IntPtr)(it.ToInt64() + engine.Model!.ItemType)); if (t != 0) vanCount++; }
+    }
+    Console.WriteLine($"  vanity slots (armor[13..19]) with item = {vanCount}");
+    Console.WriteLine("  watching counters for 2s:");
+    for (int k = 0; k < 4; k++) { System.Threading.Thread.Sleep(500); Console.WriteLine($"    entries={m.ReadInt32((IntPtr)(caveAddr.ToInt64() + 0x1F0))} calls={m.ReadInt32((IntPtr)(caveAddr.ToInt64() + 0x1F4))}"); }
+    Console.WriteLine("  (calls per entry should ≈ vanity-slot count above)");
+    return 0;
+}
+
 if (mode == "drilltest")
 {
     // SAFE: write the HELD item's use-time fields (no code patching). For ~30s.
@@ -773,7 +1016,7 @@ if (mode == "table")
     using var engine = new TmlEngine();
     engine.Attach();
     var buffs = TerrariaTrainer.Cheats.BuffCheat.LoadAll();
-    var rows = TerrariaTrainer.Tml.CheatTable.Build(engine.Model!, buffs);
+    var rows = TerrariaTrainer.Tml.CheatTable.Build(engine.Model!, buffs, engine.Injector);
     int v = rows.Count(r => r.Kind == TerrariaTrainer.Tml.RowKind.Value);
     int t = rows.Count(r => r.Kind == TerrariaTrainer.Tml.RowKind.Toggle);
     int b = rows.Count(r => r.Kind == TerrariaTrainer.Tml.RowKind.Buff);
@@ -790,10 +1033,11 @@ if (mode == "fields")
     using var engine = new TmlEngine();
     engine.Attach();
     string? sub = args.Length > 1 ? args[1] : null;
-    foreach (var f in engine.Model!.PlayerFields.Where(f => f.IsPrimitive))
+    bool all = args.Length > 2 && args[2] == "all";
+    foreach (var f in engine.Model!.PlayerFields.Where(f => all || f.IsPrimitive))
     {
         if (sub != null && !f.Name.Contains(sub, StringComparison.OrdinalIgnoreCase)) continue;
-        Console.WriteLine($"{f.Name}\t+0x{f.Offset:X}\t{f.Kind}");
+        Console.WriteLine($"{f.Name}\t+0x{f.Offset:X}\t{f.Kind}\t{f.TypeName}");
     }
     return 0;
 }

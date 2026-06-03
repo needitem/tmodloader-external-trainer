@@ -30,9 +30,23 @@
   { "group": "💍 Accessory Effects (code injection)", "desc": "Black Belt (dodge)", "field": "blackBelt", "kind": "inject" },
   { "group": "💍 Accessory Effects (code injection)", "desc": "Panic! (speed after hit)", "field": "panic", "kind": "inject" },
 
+  { "group": "💍 Accessory Effects (code injection)", "desc": "Vanity/Social accessory slots give FUNCTIONAL effects (7 cosmetic slots)", "kind": "vanity" },
+
+  { "group": "🛡️ Survival (code injection)", "desc": "GOD MODE — take no damage (patches all Player.Hurt)", "kind": "patchset", "method": "Player.Hurt:zero" },
+  { "group": "🛡️ Survival (code injection)", "desc": "Infinite Mana — no mana cost (patches CheckMana/PayMana)", "kind": "patchset", "method": "Player.CheckMana:true;Player.ItemCheck_PayMana:zero" },
+  { "group": "🏃 Movement (code injection)", "desc": "Infinite Flight (wings never run out)", "field": "wingTime", "kind": "fast", "value": "1000000" },
+  { "group": "🏃 Movement (code injection)", "desc": "Infinite Rocket Boots / Spectre Boots flight", "field": "rocketTime", "kind": "fast", "value": "0" },
+  { "group": "🏃 Movement (code injection)", "desc": "No Drowning (breath never depletes)", "field": "breath", "kind": "fast", "value": "65000" },
+
+  { "group": "⚗️ Combat extras", "desc": "No Potion Sickness (heal potions never on cooldown)", "field": "potionDelay", "kind": "fast", "value": "0" },
+
   { "group": "⛏️ Speed", "desc": "Fast Mining — all pickaxes/drills/axes/hammers (useTime→1)", "kind": "tools", "value": "1" },
 
   { "group": "💰 Loot (method patch)", "desc": "100% Drop Rate / Best Luck", "kind": "patch", "method": "Player.RollLuck", "value": "0" },
+
+  { "group": "🎒 Infinite Items (method patch)", "desc": "Infinite Consumables — potions/blocks/etc never run out", "kind": "patch", "method": "ItemLoader.ConsumeItem", "value": "0" },
+  { "group": "🎒 Infinite Items (method patch)", "desc": "Infinite Ammo — ammo never consumed", "kind": "patch", "method": "CombinedHooks.CanConsumeAmmo", "value": "0" },
+  { "group": "🎒 Infinite Items (method patch)", "desc": "Infinite Bait — fishing bait never consumed", "kind": "patch", "method": "CombinedHooks.CanConsumeBait", "value": "0" },
 
   { "group": "🎣 Fishing (method patch)", "desc": "Max Fishing Power (x20)", "kind": "patch", "method": "Player.Fishing_GetPowerMultiplier", "value": "f20" },
 

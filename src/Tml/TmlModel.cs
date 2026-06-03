@@ -27,6 +27,8 @@ public sealed class TmlModel
     public List<(ulong addr, int size)> EffectMethods = new();
     // Named method JIT addresses (+size) for use-site hooks (e.g. mining reads pickSpeed).
     public Dictionary<string, (ulong addr, int size)> Methods = new();
+    // Methods that have multiple overloads we want to patch together (e.g. Player.Hurt, CheckMana).
+    public Dictionary<string, List<(ulong addr, int size)>> MethodSets = new();
     public List<TmlField> PlayerFields = new();
     public Dictionary<string, int> ItemFields = new();
 
@@ -34,6 +36,7 @@ public sealed class TmlModel
     public int BuffTypeOff = 0x100;
     public int BuffTimeOff = 0x108;
     public int InventoryOff = 0x120;
+    public int ArmorOff = 0xD8;
 
     public int ItemType => ItemFields.GetValueOrDefault("type", 0);
     public int ItemStack => ItemFields.GetValueOrDefault("stack", 0);

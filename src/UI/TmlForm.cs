@@ -367,6 +367,8 @@ public sealed class TmlForm : Form
         RowKind.Tools => "tools",
         RowKind.Craft => "craft",
         RowKind.Patch => "patch",
+        RowKind.PatchSet => "patch*",
+        RowKind.Vanity => "vanity",
         RowKind.Action => "",
         RowKind.Value => r.Field!.Kind switch
         {
@@ -449,6 +451,33 @@ public sealed class TmlForm : Form
                     AppendLog("Craft Anything OFF");
                 }
                 break;
+            case RowKind.Vanity:
+                if (r.Active)
+                {
+                    if (_engine.Injector!.HookVanityAccessories()) AppendLog($"ON: {r.Desc} (vanity/social accessory slots now functional)");
+                    else { r.Active = false; grow.Cells["active"].Value = false; AppendLog($"Failed: {r.Desc}"); }
+                }
+                else { _engine.Injector!.UnhookVanityAccessories(); AppendLog($"OFF: {r.Desc}"); }
+                break;
+            case RowKind.PatchSet:
+                if (r.Active)
+                {
+                    int total = 0;
+                    foreach (var spec in r.PatchMethod.Split(';', StringSplitOptions.RemoveEmptyEntries))
+                    {
+                        var pr = spec.Split(':'); var k = pr[0]; var ret = pr.Length > 1 ? pr[1] : "zero";
+                        total += ret == "true" ? _engine.Injector!.PatchSetReturnTrue(k) : _engine.Injector!.PatchSetReturnZero(k);
+                    }
+                    if (total > 0) AppendLog($"ON: {r.Desc} ({total} method(s) patched)");
+                    else { r.Active = false; grow.Cells["active"].Value = false; AppendLog($"Failed: {r.Desc}"); }
+                }
+                else
+                {
+                    foreach (var spec in r.PatchMethod.Split(';', StringSplitOptions.RemoveEmptyEntries))
+                        _engine.Injector!.UnpatchSet(spec.Split(':')[0]);
+                    AppendLog($"OFF: {r.Desc}");
+                }
+                break;
             case RowKind.Patch:
                 if (r.Active)
                 {
@@ -522,6 +551,8 @@ public sealed class TmlForm : Form
             else if (r.Kind == RowKind.Tools) { _engine.RestoreFastTools(); }
             else if (r.Kind == RowKind.Craft) { foreach (var k in CraftKeys) _engine.Injector?.UnhookEntry(k); }
             else if (r.Kind == RowKind.Patch) { _engine.Injector?.UnhookEntry(r.PatchMethod); }
+            else if (r.Kind == RowKind.Vanity) { _engine.Injector?.UnhookVanityAccessories(); }
+            else if (r.Kind == RowKind.PatchSet) { foreach (var spec in r.PatchMethod.Split(';', StringSplitOptions.RemoveEmptyEntries)) _engine.Injector?.UnpatchSet(spec.Split(':')[0]); }
         }
         foreach (DataGridViewRow gr in _grid.Rows)
             if (gr.Tag is CheatRow rr && rr.Kind != RowKind.GroupHeader)
