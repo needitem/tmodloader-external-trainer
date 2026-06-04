@@ -15,11 +15,8 @@ desktop.ini
 diag/bin/
 diag/obj/
 
-# Publish output / release artifacts
+# Publish output / release artifacts (the single self-contained build)
 publish/
-
-# Lock-avoidance build output
-build2/
 /tmp/
 
 # release zips (uploaded to GitHub releases, not tracked)
