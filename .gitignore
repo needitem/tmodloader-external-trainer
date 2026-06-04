@@ -21,3 +21,6 @@ publish/
 
 # release zips (uploaded to GitHub releases, not tracked)
 *.zip
+
+# claude local artifacts
+.claude/
