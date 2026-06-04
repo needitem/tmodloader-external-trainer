@@ -272,6 +272,7 @@ public sealed class TmlForm : Form
                 _rows = CheatTable.Build(_engine.Model!, _buffs.Buffs, _engine.Injector);
             }
             CacheVitalFields();
+            lock (_engine.Sync) LoadAndApplyConfig(); // restore previously-enabled cheats
             RebuildGrid();
             _invGrid.Rows.Clear(); // rebuilt lazily for the new session
             _btnRescan.Enabled = true;
@@ -313,6 +314,54 @@ public sealed class TmlForm : Form
         AppendLog("Re-scan complete (offsets refreshed).");
     }
 
+    // ---- config persistence (remember enabled cheats across restarts) ----
+
+    private static string ConfigPath => System.IO.Path.Combine(AppContext.BaseDirectory, "trainer_config.json");
+
+    /// <summary>Persist every currently-active row (by description) so it can be restored next launch.</summary>
+    private void SaveConfig()
+    {
+        try
+        {
+            var data = new Dictionary<string, string>();
+            foreach (var r in _rows)
+            {
+                if (r.Kind is RowKind.GroupHeader or RowKind.Action || !r.Active) continue;
+                data[r.Desc] = r.Kind == RowKind.Value ? (r.FrozenText ?? "")
+                    : r.Kind == RowKind.DropMult ? r.InjectValue
+                    : "on";
+            }
+            System.IO.File.WriteAllText(ConfigPath,
+                System.Text.Json.JsonSerializer.Serialize(data, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+        }
+        catch { /* best-effort */ }
+    }
+
+    /// <summary>Re-enable + re-install every cheat saved in the config (called after attach/build).</summary>
+    private void LoadAndApplyConfig()
+    {
+        Dictionary<string, string>? data = null;
+        try
+        {
+            if (System.IO.File.Exists(ConfigPath))
+                data = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(System.IO.File.ReadAllText(ConfigPath));
+        }
+        catch { return; }
+        if (data == null || data.Count == 0) return;
+        int applied = 0;
+        foreach (var r in _rows)
+        {
+            if (r.Kind is RowKind.GroupHeader or RowKind.Action) continue;
+            if (!data.TryGetValue(r.Desc, out var saved)) continue;
+            r.Active = true;
+            if (r.Kind == RowKind.Value) r.FrozenText = saved;
+            else if (r.Kind == RowKind.DropMult && int.TryParse(saved, out _)) r.InjectValue = saved;
+            try { ApplyActiveChange(r, null); applied++; }
+            catch { r.Active = false; }
+        }
+        if (applied > 0) AppendLog($"Restored {applied} saved cheat(s) from trainer_config.json.");
+    }
+
     // ---- grid build ----
 
     private IEnumerable<CheatRow> Filtered()
@@ -350,8 +399,11 @@ public sealed class TmlForm : Form
                 row.Cells["active"].Value = r.Active;
                 row.Cells["desc"].Value = r.Desc;
                 row.Cells["type"].Value = TypeLabel(r);
-                row.Cells["value"].Value = r.Kind == RowKind.Action ? "▶ click On" : "—";
-                row.Cells["value"].ReadOnly = r.Kind != RowKind.Value;
+                row.Cells["value"].Value = r.Kind == RowKind.Action ? "▶ click On"
+                    : r.Kind == RowKind.Value ? (r.FrozenText ?? "—")
+                    : r.Kind == RowKind.DropMult ? r.InjectValue
+                    : "—";
+                row.Cells["value"].ReadOnly = r.Kind != RowKind.Value && r.Kind != RowKind.DropMult;
             }
         }
         _grid.ResumeLayout();
@@ -368,6 +420,7 @@ public sealed class TmlForm : Form
         RowKind.Craft => "craft",
         RowKind.Patch => "patch",
         RowKind.PatchSet => "patch*",
+        RowKind.DropMult => "drop×",
         RowKind.Vanity => "vanity",
         RowKind.Action => "",
         RowKind.Value => r.Field!.Kind switch
@@ -387,21 +440,24 @@ public sealed class TmlForm : Form
         var grow = _grid.Rows[e.RowIndex];
         if (grow.Tag is not CheatRow r || r.Kind == RowKind.GroupHeader) return;
         if (_grid.Columns[e.ColumnIndex].Name != "active") return;
-        if (!_engine.Attached) { AppendLog("Attach first."); grow.Cells["active"].Value = false; return; }
+        if (!_engine.Attached) { AppendLog("Attach first."); if (grow != null) grow.Cells["active"].Value = false; return; }
 
-        if (r.Kind == RowKind.Action) { DoAction(r); grow.Cells["active"].Value = false; return; }
+        if (r.Kind == RowKind.Action) { DoAction(r); if (grow != null) grow.Cells["active"].Value = false; return; }
 
         r.Active = !r.Active;
         grow.Cells["active"].Value = r.Active;
         lock (_engine.Sync) ApplyActiveChange(r, grow); // serialise with the writer thread
+        grow.Cells["active"].Value = r.Active; // reflect auto-disable on failure
+        SaveConfig();
     }
 
-    private void ApplyActiveChange(CheatRow r, DataGridViewRow grow)
+    private void ApplyActiveChange(CheatRow r, DataGridViewRow? grow)
     {
         switch (r.Kind)
         {
             case RowKind.Value:
-                r.FrozenText = r.Active ? (Convert.ToString(grow.Cells["value"].Value) ?? "") : null;
+                // grow==null => restoring from config: keep r.FrozenText already loaded.
+                if (grow != null) r.FrozenText = r.Active ? (Convert.ToString(grow.Cells["value"].Value) ?? "") : null;
                 AppendLog($"{(r.Active ? "Froze" : "Unfroze")} {r.Desc}" + (r.Active ? $" = {r.FrozenText}" : ""));
                 break;
             case RowKind.Toggle:
@@ -417,7 +473,7 @@ public sealed class TmlForm : Form
                 if (r.Active)
                 {
                     if (_engine.Injector!.Patch(r.Field!.Name)) { _engine.WriteField(r.Field!, r.InjectValue); AppendLog($"Injected (NOP reset) + enabled {r.Desc}"); }
-                    else { r.Active = false; grow.Cells["active"].Value = false; AppendLog($"Could not inject {r.Desc} (reset instruction not found)"); }
+                    else { r.Active = false; if (grow != null) grow.Cells["active"].Value = false; AppendLog($"Could not inject {r.Desc} (reset instruction not found)"); }
                 }
                 else
                 {
@@ -455,9 +511,18 @@ public sealed class TmlForm : Form
                 if (r.Active)
                 {
                     if (_engine.Injector!.HookVanityAccessories()) AppendLog($"ON: {r.Desc} (vanity/social accessory slots now functional)");
-                    else { r.Active = false; grow.Cells["active"].Value = false; AppendLog($"Failed: {r.Desc}"); }
+                    else { r.Active = false; if (grow != null) grow.Cells["active"].Value = false; AppendLog($"Failed: {r.Desc}"); }
                 }
                 else { _engine.Injector!.UnhookVanityAccessories(); AppendLog($"OFF: {r.Desc}"); }
+                break;
+            case RowKind.DropMult:
+                if (r.Active)
+                {
+                    int f = int.TryParse(r.InjectValue, out var fv) ? fv : 5;
+                    if (_engine.Injector!.HookDropMultiplier(f)) AppendLog($"ON: {r.Desc} (loot stacks x{f})");
+                    else { r.Active = false; if (grow != null) grow.Cells["active"].Value = false; AppendLog($"Failed: {r.Desc}"); }
+                }
+                else { _engine.Injector!.UnhookDropMultiplier(); AppendLog($"OFF: {r.Desc}"); }
                 break;
             case RowKind.PatchSet:
                 if (r.Active)
@@ -469,7 +534,7 @@ public sealed class TmlForm : Form
                         total += ret == "true" ? _engine.Injector!.PatchSetReturnTrue(k) : _engine.Injector!.PatchSetReturnZero(k);
                     }
                     if (total > 0) AppendLog($"ON: {r.Desc} ({total} method(s) patched)");
-                    else { r.Active = false; grow.Cells["active"].Value = false; AppendLog($"Failed: {r.Desc}"); }
+                    else { r.Active = false; if (grow != null) grow.Cells["active"].Value = false; AppendLog($"Failed: {r.Desc}"); }
                 }
                 else
                 {
@@ -485,7 +550,7 @@ public sealed class TmlForm : Form
                         ? _engine.Injector!.PatchReturnFloat(r.PatchMethod, float.Parse(r.InjectValue[1..], System.Globalization.CultureInfo.InvariantCulture))
                         : r.InjectValue == "0" ? _engine.Injector!.PatchReturnZero(r.PatchMethod)
                         : _engine.Injector!.PatchReturnTrue(r.PatchMethod);
-                    if (!okp) { r.Active = false; grow.Cells["active"].Value = false; AppendLog($"Patch failed: {r.Desc}"); }
+                    if (!okp) { r.Active = false; if (grow != null) grow.Cells["active"].Value = false; AppendLog($"Patch failed: {r.Desc}"); }
                     else AppendLog($"ON: {r.Desc}");
                 }
                 else { _engine.Injector!.UnhookEntry(r.PatchMethod); AppendLog($"OFF: {r.Desc}"); }
@@ -495,7 +560,7 @@ public sealed class TmlForm : Form
                 {
                     float v = float.Parse(r.InjectValue, System.Globalization.CultureInfo.InvariantCulture);
                     if (_engine.Injector!.HookUseSites(r.Field!.Name, v, r.Methods)) AppendLog($"Hooked use-site: {r.Desc}");
-                    else { r.Active = false; grow.Cells["active"].Value = false; AppendLog($"Use-site hook failed for {r.Desc}"); }
+                    else { r.Active = false; if (grow != null) grow.Cells["active"].Value = false; AppendLog($"Use-site hook failed for {r.Desc}"); }
                 }
                 else
                 {
@@ -516,7 +581,7 @@ public sealed class TmlForm : Form
     {
         if (e.RowIndex < 0) return;
         var grow = _grid.Rows[e.RowIndex];
-        if (grow.Tag is not CheatRow r || r.Kind != RowKind.Value) return;
+        if (grow.Tag is not CheatRow r || (r.Kind != RowKind.Value && r.Kind != RowKind.DropMult)) return;
         if (_grid.Columns[e.ColumnIndex].Name == "value")
         {
             _grid.BeginEdit(true);
@@ -526,15 +591,26 @@ public sealed class TmlForm : Form
     private void Grid_CellEndEdit(object? sender, DataGridViewCellEventArgs e)
     {
         var grow = _grid.Rows[e.RowIndex];
-        if (grow.Tag is not CheatRow r || r.Kind != RowKind.Value) return;
+        if (grow.Tag is not CheatRow r) return;
         if (_grid.Columns[e.ColumnIndex].Name != "value") return;
         var text = Convert.ToString(grow.Cells["value"].Value) ?? "";
+
+        if (r.Kind == RowKind.DropMult)
+        {
+            if (!int.TryParse(text.Trim(), out var f) || f < 1) { f = 1; grow.Cells["value"].Value = "1"; }
+            r.InjectValue = f.ToString();
+            if (r.Active) lock (_engine.Sync) { _engine.Injector!.HookDropMultiplier(f); AppendLog($"Drop multiplier set to x{f}"); }
+            SaveConfig();
+            return;
+        }
+
+        if (r.Kind != RowKind.Value) return;
         lock (_engine.Sync)
         {
             if (_engine.WriteField(r.Field!, text)) AppendLog($"Set {r.Desc} = {text}");
             else AppendLog($"Failed to write {r.Desc}");
         }
-        if (r.Active) r.FrozenText = text; // keep freezing the new value
+        if (r.Active) { r.FrozenText = text; SaveConfig(); } // keep freezing the new value
     }
 
     private void DisableAll()
@@ -553,10 +629,12 @@ public sealed class TmlForm : Form
             else if (r.Kind == RowKind.Patch) { _engine.Injector?.UnhookEntry(r.PatchMethod); }
             else if (r.Kind == RowKind.Vanity) { _engine.Injector?.UnhookVanityAccessories(); }
             else if (r.Kind == RowKind.PatchSet) { foreach (var spec in r.PatchMethod.Split(';', StringSplitOptions.RemoveEmptyEntries)) _engine.Injector?.UnpatchSet(spec.Split(':')[0]); }
+            else if (r.Kind == RowKind.DropMult) { _engine.Injector?.UnhookDropMultiplier(); }
         }
         foreach (DataGridViewRow gr in _grid.Rows)
             if (gr.Tag is CheatRow rr && rr.Kind != RowKind.GroupHeader)
                 gr.Cells["active"].Value = false;
+        SaveConfig();
         AppendLog("Disabled all active cheats.");
     }
 

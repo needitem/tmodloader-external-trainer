@@ -277,6 +277,22 @@ if (mode == "setpatch")
     return 0;
 }
 
+if (mode == "dropmult")
+{
+    using var engine = new TmlEngine();
+    engine.Log += Console.WriteLine;
+    engine.Attach();
+    var inj = engine.Injector!;
+    string a = args.Length > 1 ? args[1] : "5";
+    if (!engine.Model!.Methods.ContainsKey("CommonCode.DropItem")) { Console.WriteLine("CommonCode.DropItem NOT discovered!"); return 0; }
+    Console.WriteLine($"CommonCode.DropItem @0x{engine.Model!.Methods["CommonCode.DropItem"].addr:X}");
+    if (a == "off") { inj.UnhookDropMultiplier(); Console.WriteLine("drop multiplier OFF"); return 0; }
+    int f = int.Parse(a);
+    bool ok = inj.HookDropMultiplier(f);
+    Console.WriteLine($"drop multiplier x{f} installed = {ok}. Kill enemies to test; `dropmult off` to undo.");
+    return 0;
+}
+
 if (mode == "freeze")
 {
     using var engine = new TmlEngine();

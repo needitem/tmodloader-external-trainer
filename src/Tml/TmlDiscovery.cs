@@ -148,6 +148,9 @@ public static class TmlDiscovery
         AddNamedMethod(runtime, model, "Terraria.Player", "Fishing_GetPowerMultiplier"); // ->high = strong fishing
         AddNamedMethod(runtime, model, "Terraria.Player", "HasNPCBannerBuff");           // ->true = all banner bonuses
 
+        // Drop multiplier: hook CommonCode.DropItem(DropAttemptInfo, itemId, stack, scattered) and scale `stack` (r8d).
+        AddNamedMethodSig(runtime, model, "Terraria.GameContent.ItemDropRules.CommonCode", "DropItem", "DropAttemptInfo", "CommonCode.DropItem");
+
         AddNamedMethod(runtime, model, "Terraria.ModLoader.ItemLoader", "ConsumeItem");          // ->false = infinite consumables
         AddNamedMethod(runtime, model, "Terraria.ModLoader.CombinedHooks", "CanConsumeAmmo");    // ->false = infinite ammo
         AddNamedMethod(runtime, model, "Terraria.ModLoader.CombinedHooks", "CanConsumeBait");    // ->false = infinite bait
@@ -195,6 +198,19 @@ public static class TmlDiscovery
         if (size <= 0 || size > 0x40000) size = 0x1000;
         string shortType = typeName.Contains('.') ? typeName[(typeName.LastIndexOf('.') + 1)..] : typeName;
         model.Methods[$"{shortType}.{methodName}"] = (m.NativeCode, size);
+    }
+
+    /// <summary>Find the overload of a method whose signature contains <paramref name="sigContains"/>, store under <paramref name="key"/>.</summary>
+    private static void AddNamedMethodSig(ClrRuntime runtime, TmlModel model, string typeName, string methodName, string sigContains, string key)
+    {
+        var t = FindType(runtime, typeName);
+        if (t == null) return;
+        var m = t.Methods.FirstOrDefault(x => x.Name == methodName && x.NativeCode != 0
+            && (x.Signature?.Contains(sigContains) ?? false));
+        if (m == null) return;
+        int size; try { size = (int)m.HotColdInfo.HotSize; } catch { size = 0; }
+        if (size <= 0 || size > 0x40000) size = 0x1000;
+        model.Methods[key] = (m.NativeCode, size);
     }
 
     /// <summary>Collect EVERY JIT-compiled overload of a method name into model.MethodSets["Type.Method"].</summary>

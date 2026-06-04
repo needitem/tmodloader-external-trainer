@@ -568,6 +568,50 @@ public sealed class CodeInjector
 
     public void UnhookVanityAccessories() => UnhookEntry("vanityAccessories");
 
+    public bool CanHookDropMultiplier() =>
+        _model.Methods.TryGetValue("CommonCode.DropItem", out var d) && d.addr != 0;
+
+    /// <summary>
+    /// Multiply NPC loot stacks: cave at CommonCode.DropItem's entry does `imul r8d, r8d, factor`
+    /// (r8d = the drop's stack count) before the method runs. Item.NewItem clamps overflows.
+    /// </summary>
+    public bool HookDropMultiplier(int factor)
+    {
+        const string KEY = "dropMult";
+        UnhookEntry(KEY); // re-install to change the factor
+        if (factor < 1) factor = 1;
+        if (!_model.Methods.TryGetValue("CommonCode.DropItem", out var d) || d.addr == 0) return false;
+
+        IntPtr entry = (IntPtr)d.addr;
+        var head = _mem.ReadBytes(entry, 16);
+        int disp = PrologueLen(head, 5);
+        if (disp < 5) return false;
+
+        IntPtr cave = _mem.AllocNear(entry, 0x40, MemoryProtection.ExecuteReadWrite);
+        if (cave == IntPtr.Zero) return false;
+
+        var cb = new List<byte> { 0x45, 0x69, 0xC0 };              // imul r8d, r8d, imm32
+        cb.AddRange(BitConverter.GetBytes(factor));
+        cb.AddRange(head.Take(disp));                              // displaced prologue
+        cb.Add(0xE9);                                              // jmp back to entry+disp
+        cb.AddRange(BitConverter.GetBytes((int)((entry.ToInt64() + disp) - (cave.ToInt64() + cb.Count + 4))));
+        _mem.WriteBytes(cave, cb.ToArray());
+
+        var patch = new byte[disp];
+        patch[0] = 0xE9;
+        BitConverter.GetBytes((int)(cave.ToInt64() - (entry.ToInt64() + 5))).CopyTo(patch, 1);
+        for (int k = 5; k < disp; k++) patch[k] = 0x90;
+
+        var suspended = SuspendTargetThreads();
+        try { _mem.WriteBytes(entry, patch); FlushInstructionCache(_mem.Handle, entry, (IntPtr)disp); }
+        finally { foreach (var h in suspended) { ResumeThread(h); CloseHandle(h); } }
+
+        _entryHooks[KEY] = (entry, head.Take(disp).ToArray(), cave);
+        return true;
+    }
+
+    public void UnhookDropMultiplier() => UnhookEntry("dropMult");
+
     /// <summary>True if we have the methods needed to install the vanity-accessory hook.</summary>
     public bool CanHookVanity() =>
         _model.Methods.TryGetValue("UpdateEquips", out var ue) && ue.addr != 0 &&
