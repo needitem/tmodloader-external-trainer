@@ -148,6 +148,12 @@ public static class TmlDiscovery
         AddNamedMethod(runtime, model, "Terraria.Player", "Fishing_GetPowerMultiplier"); // ->high = strong fishing
         AddNamedMethod(runtime, model, "Terraria.Player", "HasNPCBannerBuff");           // ->true = all banner bonuses
 
+        // Always-crate fishing: hook Projectile.FishingCheck_RollItemDrop(ref FishingAttempt) and force attempt.crate=true.
+        AddNamedMethod(runtime, model, "Terraria.Projectile", "FishingCheck_RollItemDrop");
+        var faType = FindType(runtime, "Terraria.DataStructures.FishingAttempt");
+        var crateF = faType?.GetFieldByName("crate");
+        if (crateF != null) model.FishingCrateOff = crateF.Offset; // value type: byref offset has no MT header
+
         // Drop multiplier: hook CommonCode.DropItem(DropAttemptInfo, itemId, stack, scattered) and scale `stack` (r8d).
         AddNamedMethodSig(runtime, model, "Terraria.GameContent.ItemDropRules.CommonCode", "DropItem", "DropAttemptInfo", "CommonCode.DropItem");
 

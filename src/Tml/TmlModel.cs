@@ -37,6 +37,7 @@ public sealed class TmlModel
     public int BuffTimeOff = 0x108;
     public int InventoryOff = 0x120;
     public int ArmorOff = 0xD8;
+    public int FishingCrateOff = 0x39; // FishingAttempt.crate (value-type, byref offset — no header)
 
     public int ItemType => ItemFields.GetValueOrDefault("type", 0);
     public int ItemStack => ItemFields.GetValueOrDefault("stack", 0);

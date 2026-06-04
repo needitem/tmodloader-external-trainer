@@ -4,7 +4,7 @@ using TerrariaTrainer.Cheats;
 
 namespace TerrariaTrainer.Tml;
 
-public enum RowKind { GroupHeader, Value, Toggle, Buff, Action, Inject, Fast, UseHook, Tools, Craft, Patch, Vanity, PatchSet, DropMult }
+public enum RowKind { GroupHeader, Value, Toggle, Buff, Action, Inject, Fast, UseHook, Tools, Craft, Patch, Vanity, PatchSet, DropMult, Crate }
 
 /// <summary>A single row in the Cheat-Engine-style table.</summary>
 public sealed class CheatRow
@@ -60,6 +60,13 @@ public static class CheatTable
             {
                 EmitGroup(rows, ref lastGroup, d.Group);
                 rows.Add(new CheatRow { Kind = RowKind.Craft, Group = d.Group, Desc = d.Desc });
+                continue;
+            }
+            if (d.Kind.Equals("crate", StringComparison.OrdinalIgnoreCase))
+            {
+                if (injector == null || !injector.CanHookAlwaysCrate()) continue;
+                EmitGroup(rows, ref lastGroup, d.Group);
+                rows.Add(new CheatRow { Kind = RowKind.Crate, Group = d.Group, Desc = d.Desc });
                 continue;
             }
             if (d.Kind.Equals("dropmult", StringComparison.OrdinalIgnoreCase))
@@ -123,22 +130,33 @@ public static class CheatTable
         EmitGroup(rows, ref lastGroup, "🎒 Inventory");
         rows.Add(new CheatRow { Kind = RowKind.Action, Group = "🎒 Inventory", Desc = "Max Stack All Items (click)" });
 
-        // ---- buff toggles ----
+        // ---- buff toggles, grouped by function (mirrors CT's potion categories) ----
         // Effects like speed/defense/vision/mining are delivered as buffs because the
         // game recomputes the raw Player fields every frame (external freezes can't hold
         // them); the in-game buff IS the reliable mechanism and the game applies it.
-        const string buffGroup = "🔮 Buffs — speed · defense · vision · mining · immunity (tick On to keep)";
-        EmitGroup(rows, ref lastGroup, buffGroup);
-        foreach (var b in buffs)
+        // Stable category order; emoji prefixes for the CE-style header look.
+        var catOrder = new (string key, string title)[]
         {
-            if (b.Mode == "maxstack") continue; // surfaced as the action row above
-            rows.Add(new CheatRow
-            {
-                Kind = RowKind.Buff,
-                Group = buffGroup,
-                Desc = b.Name,
-                Buff = b,
-            });
+            ("Removals and Tools",   "🧹 Buffs — Removals & Tools (tick On to keep)"),
+            ("Damage and Combat",    "⚔️ Buffs — Damage & Combat"),
+            ("Defense",              "🛡️ Buffs — Defense"),
+            ("Regen and Healing",    "❤️ Buffs — Regen & Healing"),
+            ("Mobility",             "🏃 Buffs — Mobility"),
+            ("Vision and Utility",   "👁️ Buffs — Vision & Utility"),
+            ("Mining and Building",  "⛏️ Buffs — Mining & Building"),
+            ("Fishing",              "🎣 Buffs — Fishing"),
+            ("Spawn Rate",           "🐲 Buffs — Spawn Rate"),
+            ("Well Fed",             "🍖 Buffs — Well Fed"),
+            ("Summoning",            "👾 Buffs — Summoning"),
+            ("Misc",                 "🔮 Buffs — Misc"),
+        };
+        foreach (var (key, title) in catOrder)
+        {
+            var inCat = buffs.Where(b => b.Mode != "maxstack" && b.Category == key).ToList();
+            if (inCat.Count == 0) continue;
+            EmitGroup(rows, ref lastGroup, title);
+            foreach (var b in inCat)
+                rows.Add(new CheatRow { Kind = RowKind.Buff, Group = title, Desc = b.Name, Buff = b });
         }
 
         return rows;

@@ -612,6 +612,51 @@ public sealed class CodeInjector
 
     public void UnhookDropMultiplier() => UnhookEntry("dropMult");
 
+    public bool CanHookAlwaysCrate() =>
+        _model.Methods.TryGetValue("Projectile.FishingCheck_RollItemDrop", out var d) && d.addr != 0;
+
+    /// <summary>
+    /// Always catch crates: cave at Projectile.FishingCheck_RollItemDrop's entry sets
+    /// attempt.crate = true (rdx = ref FishingAttempt) before the item is rolled.
+    /// </summary>
+    public bool HookAlwaysCrate()
+    {
+        const string KEY = "alwaysCrate";
+        if (_entryHooks.ContainsKey(KEY)) return true;
+        if (!_model.Methods.TryGetValue("Projectile.FishingCheck_RollItemDrop", out var m) || m.addr == 0) return false;
+        int crateOff = _model.FishingCrateOff;
+
+        IntPtr entry = (IntPtr)m.addr;
+        var head = _mem.ReadBytes(entry, 16);
+        int disp = PrologueLen(head, 5);
+        if (disp < 5) return false;
+
+        IntPtr cave = _mem.AllocNear(entry, 0x40, MemoryProtection.ExecuteReadWrite);
+        if (cave == IntPtr.Zero) return false;
+
+        var cb = new List<byte> { 0xC6, 0x82 };                   // mov byte [rdx+crateOff], 1
+        cb.AddRange(BitConverter.GetBytes(crateOff));
+        cb.Add(0x01);
+        cb.AddRange(head.Take(disp));                             // displaced prologue
+        cb.Add(0xE9);                                            // jmp back to entry+disp
+        cb.AddRange(BitConverter.GetBytes((int)((entry.ToInt64() + disp) - (cave.ToInt64() + cb.Count + 4))));
+        _mem.WriteBytes(cave, cb.ToArray());
+
+        var patch = new byte[disp];
+        patch[0] = 0xE9;
+        BitConverter.GetBytes((int)(cave.ToInt64() - (entry.ToInt64() + 5))).CopyTo(patch, 1);
+        for (int k = 5; k < disp; k++) patch[k] = 0x90;
+
+        var suspended = SuspendTargetThreads();
+        try { _mem.WriteBytes(entry, patch); FlushInstructionCache(_mem.Handle, entry, (IntPtr)disp); }
+        finally { foreach (var h in suspended) { ResumeThread(h); CloseHandle(h); } }
+
+        _entryHooks[KEY] = (entry, head.Take(disp).ToArray(), cave);
+        return true;
+    }
+
+    public void UnhookAlwaysCrate() => UnhookEntry("alwaysCrate");
+
     /// <summary>True if we have the methods needed to install the vanity-accessory hook.</summary>
     public bool CanHookVanity() =>
         _model.Methods.TryGetValue("UpdateEquips", out var ue) && ue.addr != 0 &&

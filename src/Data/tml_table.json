@@ -50,6 +50,7 @@
   { "group": "🎒 Infinite Items (method patch)", "desc": "Infinite Bait — fishing bait never consumed", "kind": "patch", "method": "CombinedHooks.CanConsumeBait", "value": "0" },
 
   { "group": "🎣 Fishing (method patch)", "desc": "Max Fishing Power (x20)", "kind": "patch", "method": "Player.Fishing_GetPowerMultiplier", "value": "f20" },
+  { "group": "🎣 Fishing (method patch)", "desc": "Always Catch Crates (every fishing catch is a crate)", "kind": "crate" },
 
   { "group": "⚔️ Combat (method patch)", "desc": "All Banner Effects (vs all enemies)", "kind": "patch", "method": "Player.HasNPCBannerBuff", "value": "1" }
 ]

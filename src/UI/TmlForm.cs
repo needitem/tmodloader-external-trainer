@@ -421,6 +421,7 @@ public sealed class TmlForm : Form
         RowKind.Patch => "patch",
         RowKind.PatchSet => "patch*",
         RowKind.DropMult => "drop×",
+        RowKind.Crate => "fishing",
         RowKind.Vanity => "vanity",
         RowKind.Action => "",
         RowKind.Value => r.Field!.Kind switch
@@ -523,6 +524,14 @@ public sealed class TmlForm : Form
                     else { r.Active = false; if (grow != null) grow.Cells["active"].Value = false; AppendLog($"Failed: {r.Desc}"); }
                 }
                 else { _engine.Injector!.UnhookDropMultiplier(); AppendLog($"OFF: {r.Desc}"); }
+                break;
+            case RowKind.Crate:
+                if (r.Active)
+                {
+                    if (_engine.Injector!.HookAlwaysCrate()) AppendLog($"ON: {r.Desc}");
+                    else { r.Active = false; if (grow != null) grow.Cells["active"].Value = false; AppendLog($"Failed: {r.Desc}"); }
+                }
+                else { _engine.Injector!.UnhookAlwaysCrate(); AppendLog($"OFF: {r.Desc}"); }
                 break;
             case RowKind.PatchSet:
                 if (r.Active)
@@ -630,6 +639,7 @@ public sealed class TmlForm : Form
             else if (r.Kind == RowKind.Vanity) { _engine.Injector?.UnhookVanityAccessories(); }
             else if (r.Kind == RowKind.PatchSet) { foreach (var spec in r.PatchMethod.Split(';', StringSplitOptions.RemoveEmptyEntries)) _engine.Injector?.UnpatchSet(spec.Split(':')[0]); }
             else if (r.Kind == RowKind.DropMult) { _engine.Injector?.UnhookDropMultiplier(); }
+            else if (r.Kind == RowKind.Crate) { _engine.Injector?.UnhookAlwaysCrate(); }
         }
         foreach (DataGridViewRow gr in _grid.Rows)
             if (gr.Tag is CheatRow rr && rr.Kind != RowKind.GroupHeader)

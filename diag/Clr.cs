@@ -293,6 +293,18 @@ internal static class ClrDiscovery
                 Console.WriteLine($"  +0x{f.Offset:X3} (real 0x{f.Offset + 8:X3})  {f.Type?.Name,-20} {f.Name}");
     }
 
+    public static void ListTypeFields(int pid, string typeName, string sub)
+    {
+        using var dt = DataTarget.CreateSnapshotAndAttach(pid);
+        using var runtime = dt.ClrVersions.First().CreateRuntime();
+        var t = FindType(runtime, typeName);
+        if (t == null) { Console.WriteLine($"{typeName} not found"); return; }
+        Console.WriteLine($"{typeName} (IsValueType={t.IsValueType}):");
+        foreach (var f in t.Fields.OrderBy(f => f.Offset))
+            if (f.Name != null && (sub == "" || f.Name.Contains(sub, StringComparison.OrdinalIgnoreCase)))
+                Console.WriteLine($"  byref +0x{f.Offset:X3} (objref real 0x{f.Offset + 8:X3})  {f.Type?.Name,-20} {f.Name}");
+    }
+
     public static void ListMethods(int pid, string sub, string typeName = "Terraria.Player")
     {
         using var dt = DataTarget.CreateSnapshotAndAttach(pid);

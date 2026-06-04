@@ -277,6 +277,21 @@ if (mode == "setpatch")
     return 0;
 }
 
+if (mode == "crate")
+{
+    using var engine = new TmlEngine();
+    engine.Log += Console.WriteLine;
+    engine.Attach();
+    var inj = engine.Injector!;
+    string a = args.Length > 1 ? args[1] : "on";
+    if (!engine.Model!.Methods.ContainsKey("Projectile.FishingCheck_RollItemDrop")) { Console.WriteLine("FishingCheck_RollItemDrop NOT discovered!"); return 0; }
+    Console.WriteLine($"FishingCheck_RollItemDrop @0x{engine.Model!.Methods["Projectile.FishingCheck_RollItemDrop"].addr:X}, crateOff=0x{engine.Model!.FishingCrateOff:X}");
+    if (a == "off") { inj.UnhookAlwaysCrate(); Console.WriteLine("always-crate OFF"); return 0; }
+    bool ok = inj.HookAlwaysCrate();
+    Console.WriteLine($"always-crate installed = {ok}. Go fishing; `crate off` to undo.");
+    return 0;
+}
+
 if (mode == "dropmult")
 {
     using var engine = new TmlEngine();
@@ -824,6 +839,12 @@ if (mode == "methods")
 if (mode == "itemfields")
 {
     ClrDiscovery.ListItemFields(proc.Id, args.Length > 1 ? args[1] : "");
+    return 0;
+}
+
+if (mode == "typefields")
+{
+    ClrDiscovery.ListTypeFields(proc.Id, args.Length > 1 ? args[1] : "Terraria.DataStructures.FishingAttempt", args.Length > 2 ? args[2] : "");
     return 0;
 }
 

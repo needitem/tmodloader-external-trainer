@@ -12,6 +12,7 @@ public sealed class BuffCheat
     [JsonPropertyName("mode")] public string Mode { get; set; } = "apply"; // apply | clear | maxstack
     [JsonPropertyName("buff")] public int Buff { get; set; }
     [JsonPropertyName("duration")] public int Duration { get; set; } = 219600;
+    [JsonPropertyName("cat")] public string Category { get; set; } = "Misc";
 
     [JsonIgnore] public bool Enabled { get; set; }
 
