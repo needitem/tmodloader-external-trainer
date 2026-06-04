@@ -38,7 +38,7 @@
   { "group": "🏃 Movement (code injection)", "desc": "Infinite Rocket Boots / Spectre Boots flight", "field": "rocketTime", "kind": "fast", "value": "0" },
   { "group": "🏃 Movement (code injection)", "desc": "No Drowning (breath never depletes)", "field": "breath", "kind": "fast", "value": "65000" },
 
-  { "group": "⚗️ Combat extras", "desc": "No Potion Sickness (heal potions never on cooldown)", "field": "potionDelay", "kind": "fast", "value": "0" },
+  { "group": "⚗️ Combat extras", "desc": "No Potion Sickness (heal potions never on cooldown)", "kind": "patch", "method": "Player.ApplyPotionDelay", "value": "0" },
 
   { "group": "⛏️ Speed", "desc": "Fast Mining — all pickaxes/drills/axes/hammers (useTime→1)", "kind": "tools", "value": "1" },
 

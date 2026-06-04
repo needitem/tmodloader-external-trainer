@@ -140,6 +140,57 @@ if (mode == "scopeluck")
     return 0;
 }
 
+if (mode == "potionfix")
+{
+    using var engine = new TmlEngine();
+    engine.Attach();
+    var p = engine.Proc!;
+    IntPtr pb = IntPtr.Zero;
+    for (int i = 0; i < 40 && pb == IntPtr.Zero; i++) { pb = engine.PlayerBase(); if (pb == IntPtr.Zero) System.Threading.Thread.Sleep(500); }
+    if (pb == IntPtr.Zero) { Console.WriteLine("No world."); return 0; }
+    var m = engine.Mem!;
+    int btOff = engine.Model!.BuffTypeOff;
+    byte[] stub = { 0x31, 0xC0, 0xC3 };
+    Console.WriteLine("Continuously no-op'ing ApplyPotionDelay for 25s. DRINK POTIONS RAPIDLY. (buff21 should stay False)");
+    for (int k = 0; k < 60; k++)
+    {
+        ulong addr = ClrDiscovery.ResolveMethodCode(p.Id, "Terraria.Player", "ApplyPotionDelay");
+        if (addr != 0) { var c = m.ReadBytes((IntPtr)addr, 3); if (!(c[0]==0x31&&c[1]==0xC0&&c[2]==0xC3)) m.WriteBytes((IntPtr)addr, stub); }
+        IntPtr bt = m.ReadPtr64((IntPtr)(pb.ToInt64() + btOff));
+        bool has21 = false; if (bt != IntPtr.Zero) for (int s = 0; s < 44; s++) if (m.ReadInt32((IntPtr)(bt.ToInt64()+0x10+s*4)) == 21) { has21 = true; break; }
+        if (k % 4 == 0 || has21) Console.WriteLine($"  t={k*0.4:0.0}s buff21(PotionSickness)={has21}{(has21?"  <-- STILL BLOCKED":"")}");
+        System.Threading.Thread.Sleep(400);
+    }
+    Console.WriteLine("done. (if buff21 stayed False while drinking, ApplyPotionDelay no-op is the fix)");
+    return 0;
+}
+
+if (mode == "potionwatch")
+{
+    using var engine = new TmlEngine();
+    engine.Attach();
+    IntPtr pb = IntPtr.Zero;
+    for (int i = 0; i < 40 && pb == IntPtr.Zero; i++) { pb = engine.PlayerBase(); if (pb == IntPtr.Zero) System.Threading.Thread.Sleep(500); }
+    if (pb == IntPtr.Zero) { Console.WriteLine("No world."); return 0; }
+    var m = engine.Mem!;
+    int pdOff = engine.Model!.PlayerFields.First(f => f.Name == "potionDelay").Offset;
+    int slOff = engine.Model!.PlayerFields.First(f => f.Name == "statLife").Offset;
+    int btOff = engine.Model!.BuffTypeOff;
+    Console.WriteLine($"player@0x{pb.ToInt64():X} potionDelay(+0x{pdOff:X}) statLife(+0x{slOff:X}). DRINK HEALING POTIONS NOW (25s).");
+    for (int k = 0; k < 50; k++)
+    {
+        int pd = m.ReadInt32((IntPtr)(pb.ToInt64() + pdOff));
+        int sl = m.ReadInt32((IntPtr)(pb.ToInt64() + slOff));
+        IntPtr bt = m.ReadPtr64((IntPtr)(pb.ToInt64() + btOff));
+        bool has21 = false; var ids = new List<int>();
+        if (bt != IntPtr.Zero) for (int s = 0; s < 44; s++) { int id = m.ReadInt32((IntPtr)(bt.ToInt64() + 0x10 + s * 4)); if (id != 0) ids.Add(id); if (id == 21) has21 = true; }
+        if (k % 3 == 0 || pd > 0 || has21) Console.WriteLine($"  t={k*0.4:0.0}s HP={sl} potionDelay={pd} buff21={has21} buffs=[{string.Join(",", ids)}]");
+        System.Threading.Thread.Sleep(400);
+    }
+    Console.WriteLine("done.");
+    return 0;
+}
+
 if (mode == "findme")
 {
     int clientPid = int.Parse(args[1]);
