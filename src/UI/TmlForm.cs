@@ -97,6 +97,7 @@ public sealed class TmlForm : Form
     private static byte[] RetUZero => new byte[] { 0x31, 0xC0, 0x0F, 0x57, 0xC0, 0xC3 };        // xor eax; xorps xmm0; ret (int/float/double)
     private static byte[] RetTrue => new byte[] { 0xB8, 0x01, 0x00, 0x00, 0x00, 0xC3 };          // mov eax,1; ret
     private static byte[] RetFloat(float v) { var c = new byte[] { 0xB8, 0, 0, 0, 0, 0x66, 0x0F, 0x6E, 0xC0, 0xC3 }; BitConverter.GetBytes(v).CopyTo(c, 1); return c; }
+    private static byte[] RetInt(int v) { var c = new byte[] { 0xB8, 0, 0, 0, 0, 0xC3 }; BitConverter.GetBytes(v).CopyTo(c, 1); return c; } // mov eax,imm32; ret
 
     /// <summary>Continuously asserts active cheats at ~2ms so per-frame-recomputed values hold.</summary>
     private void WriterLoop()
@@ -600,7 +601,7 @@ public sealed class TmlForm : Form
                 {
                     var stub = r.InjectValue.StartsWith("f")
                         ? RetFloat(float.Parse(r.InjectValue[1..], System.Globalization.CultureInfo.InvariantCulture))
-                        : r.InjectValue == "0" ? RetZero : RetTrue;
+                        : int.TryParse(r.InjectValue, out var iv) ? RetInt(iv) : RetTrue;
                     _sticky.Register(r.PatchMethod, stub);
                     AppendLog($"ON: {r.Desc} (auto-reasserted vs JIT)");
                 }

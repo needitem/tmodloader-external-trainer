@@ -38,6 +38,8 @@
   { "group": "🏃 Movement (code injection)", "desc": "Infinite Rocket Boots / Spectre Boots flight", "field": "rocketTime", "kind": "fast", "value": "0" },
   { "group": "🏃 Movement (code injection)", "desc": "No Drowning (breath never depletes)", "field": "breath", "kind": "fast", "value": "65000" },
 
+  { "group": "🧲 Quality of Life", "desc": "Huge Item Pickup Range (items suck in from across the screen)", "kind": "patch", "method": "Player.GetItemGrabRange", "value": "2000" },
+
   { "group": "🚫 No Debuffs (sickness / cooldown)", "desc": "No Potion Sickness (heal potions never on cooldown)", "kind": "patch", "method": "Player.ApplyPotionDelay", "value": "0" },
   { "group": "🚫 No Debuffs (sickness / cooldown)", "desc": "No Mana Sickness (full magic damage after mana potions)", "kind": "buffclear", "value": "94" },
   { "group": "🚫 No Debuffs (sickness / cooldown)", "desc": "No Chaos State (Rod of Discord no cooldown)", "kind": "buffclear", "value": "88" },

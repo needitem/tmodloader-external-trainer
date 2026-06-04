@@ -174,6 +174,7 @@ public static class TmlDiscovery
         AddNamedMethod(runtime, model, "Terraria.Player", "Fishing_GetPowerMultiplier"); // ->high = strong fishing
         AddNamedMethod(runtime, model, "Terraria.Player", "HasNPCBannerBuff");           // ->true = all banner bonuses
         AddNamedMethod(runtime, model, "Terraria.Player", "ApplyPotionDelay");           // no-op => no potion sickness
+        AddNamedMethod(runtime, model, "Terraria.Player", "GetItemGrabRange");           // ->big = huge item pickup range
 
         // Always-crate fishing: hook Projectile.FishingCheck_RollItemDrop(ref FishingAttempt) and force attempt.crate=true.
         AddNamedMethod(runtime, model, "Terraria.Projectile", "FishingCheck_RollItemDrop");
