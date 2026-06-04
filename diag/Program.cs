@@ -140,6 +140,70 @@ if (mode == "scopeluck")
     return 0;
 }
 
+if (mode == "ammotop")
+{
+    using var engine = new TmlEngine();
+    engine.Attach();
+    IntPtr pb = IntPtr.Zero;
+    for (int i = 0; i < 40 && pb == IntPtr.Zero; i++) { pb = engine.PlayerBase(); if (pb == IntPtr.Zero) System.Threading.Thread.Sleep(500); }
+    if (pb == IntPtr.Zero) { Console.WriteLine("No world."); return 0; }
+    int secs = args.Length > 1 ? int.Parse(args[1]) : 25;
+    // one-time inventory dump: show every slot's type/ammo/stack/max
+    var mm = engine.Mem!;
+    int aOff2 = engine.Model!.ItemFields.GetValueOrDefault("ammo", 0);
+    Console.WriteLine($"ammo field offset = 0x{aOff2:X}");
+    IntPtr inv2 = mm.ReadPtr64((IntPtr)(pb.ToInt64() + engine.Model!.InventoryOff));
+    int len2 = inv2 != IntPtr.Zero ? mm.ReadInt32((IntPtr)(inv2.ToInt64()+8)) : 0;
+    Console.WriteLine($"inventory len={len2}");
+    for (int i = 0; i < len2; i++)
+    {
+        IntPtr it = mm.ReadPtr64((IntPtr)(inv2.ToInt64()+0x10+i*8));
+        if (it == IntPtr.Zero) continue;
+        int ty = mm.ReadInt32((IntPtr)(it.ToInt64()+engine.Model!.ItemType));
+        if (ty == 0) continue;
+        int am = aOff2!=0 ? mm.ReadInt32((IntPtr)(it.ToInt64()+aOff2)) : -1;
+        int st = mm.ReadInt32((IntPtr)(it.ToInt64()+engine.Model!.ItemStack));
+        int mx = mm.ReadInt32((IntPtr)(it.ToInt64()+engine.Model!.ItemMaxStack));
+        if (am != 0) Console.WriteLine($"  slot[{i}] type={ty} ammo={am} stack={st}/{mx} \"{engine.ItemName(ty)}\"");
+    }
+    Console.WriteLine($"Topping ammo every 300ms for {secs}s. FIRE A RANGED WEAPON NOW.");
+    for (int k = 0; k < secs * 1000 / 300; k++) { int n = engine.TopAmmo(); if (k % 5 == 0) Console.WriteLine($"  t={k*0.3:0.0}s topped {n} ammo stack(s)"); System.Threading.Thread.Sleep(300); }
+    Console.WriteLine("done.");
+    return 0;
+}
+
+if (mode == "consumefix")
+{
+    using var engine = new TmlEngine();
+    engine.Attach();
+    var p = engine.Proc!;
+    var m = engine.Mem!;
+    int secs = args.Length > 1 ? int.Parse(args[1]) : 30;
+    byte[] stub = { 0x31, 0xC0, 0xC3 };
+    var targets = new (string type, string method)[]
+    {
+        ("Terraria.ModLoader.ItemLoader", "ConsumeItem"),
+        ("Terraria.ModLoader.CombinedHooks", "CanConsumeAmmo"),
+        ("Terraria.ModLoader.CombinedHooks", "CanConsumeBait"),
+    };
+    Console.WriteLine($"Continuously patching ConsumeItem/CanConsumeAmmo->false on PID {p.Id} for {secs}s. USE CONSUMABLES / FIRE WEAPONS NOW.");
+    var seen = new HashSet<string>();
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    while (sw.Elapsed.TotalSeconds < secs)
+    {
+        foreach (var (t, meth) in targets)
+        {
+            ulong addr = ClrDiscovery.ResolveMethodCode(p.Id, t, meth);
+            if (addr == 0) { if (seen.Add(meth+"!")) Console.WriteLine($"  {t}.{meth}: NOT JITTED"); continue; }
+            var c = m.ReadBytes((IntPtr)addr, 3);
+            if (!(c[0]==0x31&&c[1]==0xC0&&c[2]==0xC3)) { m.WriteBytes((IntPtr)addr, stub); if (seen.Add(meth+addr)) Console.WriteLine($"  patched {meth} @0x{addr:X}"); }
+        }
+        System.Threading.Thread.Sleep(1200);
+    }
+    Console.WriteLine("done.");
+    return 0;
+}
+
 if (mode == "potionfix")
 {
     using var engine = new TmlEngine();
@@ -1053,7 +1117,8 @@ if (mode == "disasm")
     ClrDiscovery.DisasmMethod(proc.Id,
         args.Length > 1 ? args[1] : "TryDroppingItem",
         args.Length > 2 ? args[2] : "Terraria.GameContent.ItemDropRules.CommonDrop",
-        args.Length > 3 ? Convert.ToInt32(args[3].Replace("0x",""), 16) : 0x300);
+        args.Length > 3 ? Convert.ToInt32(args[3].Replace("0x",""), 16) : 0x300,
+        args.Length > 4 ? args[4] : null);
     return 0;
 }
 

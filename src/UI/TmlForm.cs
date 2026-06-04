@@ -135,6 +135,7 @@ public sealed class TmlForm : Form
                 case RowKind.Tools: _engine.AssertCachedTools(int.TryParse(r.InjectValue, out var t) ? t : 1, 4); break;
                 case RowKind.Craft: _engine.SetCraftAnywhere(); break;
                 case RowKind.BuffClear: if (int.TryParse(r.InjectValue, out var bid)) _engine.ClearBuff(bid); break;
+                case RowKind.InfAmmo: _engine.TopAmmo(); break;
             }
         }
     }
@@ -458,6 +459,7 @@ public sealed class TmlForm : Form
         RowKind.Crate => "fishing",
         RowKind.ScopedDrop => "drop(me)",
         RowKind.BuffClear => "no-debuff",
+        RowKind.InfAmmo => "ammo",
         RowKind.Vanity => "vanity",
         RowKind.Action => "",
         RowKind.Value => r.Field!.Kind switch
@@ -578,6 +580,11 @@ public sealed class TmlForm : Form
                 break;
             case RowKind.BuffClear:
                 // the high-frequency writer removes the buff each tick while active.
+                AppendLog($"{(r.Active ? "Enabled" : "Disabled")} {r.Desc}");
+                break;
+            case RowKind.InfAmmo:
+                // the high-frequency writer restores any consumed ammo while active.
+                if (!r.Active) _engine.ResetAmmoFreeze();
                 AppendLog($"{(r.Active ? "Enabled" : "Disabled")} {r.Desc}");
                 break;
             case RowKind.PatchInt:

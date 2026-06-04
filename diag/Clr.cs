@@ -443,12 +443,13 @@ internal static class ClrDiscovery
     }
 
     /// <summary>Real x64 disassembly of a method via Iced, resolving call targets to method names.</summary>
-    public static void DisasmMethod(int pid, string methodName, string typeName, int maxBytes)
+    public static void DisasmMethod(int pid, string methodName, string typeName, int maxBytes, string? sig = null)
     {
         using var dt = DataTarget.CreateSnapshotAndAttach(pid);
         using var runtime = dt.ClrVersions.First().CreateRuntime();
         var t = FindType(runtime, typeName);
-        var m = t?.Methods.FirstOrDefault(x => x.Name == methodName && x.NativeCode != 0);
+        var m = t?.Methods.FirstOrDefault(x => x.Name == methodName && x.NativeCode != 0
+            && (sig == null || (x.Signature?.Contains(sig) ?? false)));
         if (m == null) { Console.WriteLine($"{typeName}.{methodName} not found"); return; }
         ulong addr = m.NativeCode;
         int size = 0; try { size = (int)m.HotColdInfo.HotSize; } catch { }

@@ -129,7 +129,7 @@ public static class TmlDiscovery
         if (itemType != null)
         {
             foreach (var name in new[] { "type", "stack", "maxStack", "prefix", "netID", "favorited",
-                "useTime", "useAnimation", "useStyle", "pick", "axe", "hammer", "tileBoost", "reuseDelay", "accessory" })
+                "useTime", "useAnimation", "useStyle", "pick", "axe", "hammer", "tileBoost", "reuseDelay", "accessory", "ammo" })
             {
                 var f = itemType.GetFieldByName(name);
                 if (f != null) model.ItemFields[name] = f.Offset + HeaderSize;

@@ -50,7 +50,7 @@
   { "group": "💰 Loot (method patch)", "desc": "Drop Multiplier (enemy loot stacks — edit the number)", "kind": "dropmult", "value": "5" },
 
   { "group": "🎒 Infinite Items (method patch)", "desc": "Infinite Consumables — potions/blocks/etc never run out", "kind": "patch", "method": "ItemLoader.ConsumeItem", "value": "0" },
-  { "group": "🎒 Infinite Items (method patch)", "desc": "Infinite Ammo — ammo never consumed", "kind": "patch", "method": "CombinedHooks.CanConsumeAmmo", "value": "0" },
+  { "group": "🎒 Infinite Items (method patch)", "desc": "Infinite Ammo — ammo not consumed, count stays (works in MP)", "kind": "infammo" },
   { "group": "🎒 Infinite Items (method patch)", "desc": "Infinite Bait — fishing bait never consumed", "kind": "patch", "method": "CombinedHooks.CanConsumeBait", "value": "0" },
 
   { "group": "🎣 Fishing (method patch)", "desc": "Max Fishing Power (x20)", "kind": "patch", "method": "Player.Fishing_GetPowerMultiplier", "value": "f20" },

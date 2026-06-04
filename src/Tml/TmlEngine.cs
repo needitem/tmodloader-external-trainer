@@ -262,6 +262,45 @@ public sealed class TmlEngine : IDisposable
         return inv == IntPtr.Zero ? 0 : m.ReadInt32((IntPtr)(inv.ToInt64() + 8));
     }
 
+    // per-slot ammo "ratchet": remembers the highest stack seen so firing can't drop it
+    // (picking up more ammo raises the floor). Count stays put instead of inflating to max.
+    private readonly Dictionary<int, (int type, int stack)> _ammoFloor = new();
+    public void ResetAmmoFreeze() => _ammoFloor.Clear();
+
+    /// <summary>
+    /// "Infinite ammo" without inflating counts: if an ammo stack dropped below what it was
+    /// (a shot consumed it), restore it; if it grew (pickup), raise the remembered floor.
+    /// Independent of the mod-hooked consume path, so it works in MP too.
+    /// </summary>
+    public int TopAmmo()
+    {
+        var m = Mem; var pb = PlayerBase();
+        if (m == null || pb == IntPtr.Zero || Model == null) return 0;
+        int aOff = Model.ItemFields.GetValueOrDefault("ammo", 0);
+        if (aOff == 0) return 0;
+        IntPtr inv = m.ReadPtr64((IntPtr)(pb.ToInt64() + Model.InventoryOff));
+        if (inv == IntPtr.Zero) return 0;
+        int len = m.ReadInt32((IntPtr)(inv.ToInt64() + 8));
+        if (len < 58) return 0;
+        int tOff = Model.ItemType, sOff = Model.ItemStack;
+        int n = 0;
+        // only the 4 dedicated ammo slots (54..57) — the ammo you actually have equipped.
+        // (Avoids freezing gel/sand/blocks/coins in the main inventory, which are also "ammo".)
+        for (int i = 54; i <= 57; i++)
+        {
+            IntPtr it = m.ReadPtr64((IntPtr)(inv.ToInt64() + ArrayData + i * 8));
+            int ty = it == IntPtr.Zero ? 0 : m.ReadInt32((IntPtr)(it.ToInt64() + tOff));
+            int am = it == IntPtr.Zero ? 0 : m.ReadInt32((IntPtr)(it.ToInt64() + aOff));
+            bool isAmmo = it != IntPtr.Zero && ty != 0 && !(ty >= 71 && ty <= 74) && am != 0 && am != 71;
+            if (!isAmmo) { _ammoFloor.Remove(i); continue; }                  // slot no longer holds (non-coin) ammo
+            int stk = m.ReadInt32((IntPtr)(it.ToInt64() + sOff));
+            if (_ammoFloor.TryGetValue(i, out var prev) && prev.type == ty && stk < prev.stack && stk > 0)
+            { m.WriteInt32((IntPtr)(it.ToInt64() + sOff), prev.stack); n++; }   // restore the consumed shot(s)
+            else _ammoFloor[i] = (ty, stk);                                    // first sight / pickup / swap -> set floor
+        }
+        return n;
+    }
+
     public IntPtr InventoryItem(int slot)
     {
         var m = Mem; var pb = PlayerBase();
