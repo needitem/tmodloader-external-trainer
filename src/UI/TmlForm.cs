@@ -35,6 +35,10 @@ public sealed class TmlForm : Form
     private Thread? _writer;
     private volatile bool _writerRun = true;
 
+    // Re-applies method-entry patches across .NET tiered-JIT relocations (every ~2.5s).
+    private readonly StickyPatcher _sticky;
+    private Thread? _stickyThread;
+
     [DllImport("winmm.dll")] private static extern uint timeBeginPeriod(uint ms);
     [DllImport("winmm.dll")] private static extern uint timeEndPeriod(uint ms);
 
@@ -54,6 +58,7 @@ public sealed class TmlForm : Form
         StartPosition = FormStartPosition.CenterScreen;
         Font = new Font("Segoe UI", 9f);
 
+        _sticky = new StickyPatcher(_engine);
         _engine.Log += AppendLog;
         _btnAttach.Click += (_, _) => DoAttach();
         _btnRescan.Click += (_, _) => DoRescan();
@@ -67,7 +72,27 @@ public sealed class TmlForm : Form
 
         _writer = new Thread(WriterLoop) { IsBackground = true, Name = "freeze-writer" };
         _writer.Start();
+
+        _stickyThread = new Thread(StickyLoop) { IsBackground = true, Name = "sticky-repatch" };
+        _stickyThread.Start();
     }
+
+    /// <summary>Periodically re-asserts method patches so the .NET tiered JIT can't bypass them.</summary>
+    private void StickyLoop()
+    {
+        while (_writerRun)
+        {
+            try { if (_engine.Attached && _sticky.AnyActive) _sticky.TickOnce(); }
+            catch { /* transient (snapshot race, process gone) */ }
+            Thread.Sleep(_sticky.AnyActive ? 2500 : 1000);
+        }
+    }
+
+    // x64 return stubs.
+    private static byte[] RetZero => new byte[] { 0x31, 0xC0, 0xC3 };                          // xor eax,eax; ret
+    private static byte[] RetUZero => new byte[] { 0x31, 0xC0, 0x0F, 0x57, 0xC0, 0xC3 };        // xor eax; xorps xmm0; ret (int/float/double)
+    private static byte[] RetTrue => new byte[] { 0xB8, 0x01, 0x00, 0x00, 0x00, 0xC3 };          // mov eax,1; ret
+    private static byte[] RetFloat(float v) { var c = new byte[] { 0xB8, 0, 0, 0, 0, 0x66, 0x0F, 0x6E, 0xC0, 0xC3 }; BitConverter.GetBytes(v).CopyTo(c, 1); return c; }
 
     /// <summary>Continuously asserts active cheats at ~2ms so per-frame-recomputed values hold.</summary>
     private void WriterLoop()
@@ -271,6 +296,7 @@ public sealed class TmlForm : Form
                 _engine.Attach();
                 _rows = CheatTable.Build(_engine.Model!, _buffs.Buffs, _engine.Injector);
             }
+            _sticky.Clear(); // fresh process: drop any stale patched-address bookkeeping
             CacheVitalFields();
             lock (_engine.Sync) LoadAndApplyConfig(); // restore previously-enabled cheats
             RebuildGrid();
@@ -536,33 +562,30 @@ public sealed class TmlForm : Form
             case RowKind.PatchSet:
                 if (r.Active)
                 {
-                    int total = 0;
                     foreach (var spec in r.PatchMethod.Split(';', StringSplitOptions.RemoveEmptyEntries))
                     {
                         var pr = spec.Split(':'); var k = pr[0]; var ret = pr.Length > 1 ? pr[1] : "zero";
-                        total += ret == "true" ? _engine.Injector!.PatchSetReturnTrue(k) : _engine.Injector!.PatchSetReturnZero(k);
+                        _sticky.Register(k, ret == "true" ? RetTrue : RetUZero);
                     }
-                    if (total > 0) AppendLog($"ON: {r.Desc} ({total} method(s) patched)");
-                    else { r.Active = false; if (grow != null) grow.Cells["active"].Value = false; AppendLog($"Failed: {r.Desc}"); }
+                    AppendLog($"ON: {r.Desc} (auto-reasserted vs JIT)");
                 }
                 else
                 {
                     foreach (var spec in r.PatchMethod.Split(';', StringSplitOptions.RemoveEmptyEntries))
-                        _engine.Injector!.UnpatchSet(spec.Split(':')[0]);
+                        _sticky.Unregister(spec.Split(':')[0]);
                     AppendLog($"OFF: {r.Desc}");
                 }
                 break;
             case RowKind.Patch:
                 if (r.Active)
                 {
-                    bool okp = r.InjectValue.StartsWith("f")
-                        ? _engine.Injector!.PatchReturnFloat(r.PatchMethod, float.Parse(r.InjectValue[1..], System.Globalization.CultureInfo.InvariantCulture))
-                        : r.InjectValue == "0" ? _engine.Injector!.PatchReturnZero(r.PatchMethod)
-                        : _engine.Injector!.PatchReturnTrue(r.PatchMethod);
-                    if (!okp) { r.Active = false; if (grow != null) grow.Cells["active"].Value = false; AppendLog($"Patch failed: {r.Desc}"); }
-                    else AppendLog($"ON: {r.Desc}");
+                    var stub = r.InjectValue.StartsWith("f")
+                        ? RetFloat(float.Parse(r.InjectValue[1..], System.Globalization.CultureInfo.InvariantCulture))
+                        : r.InjectValue == "0" ? RetZero : RetTrue;
+                    _sticky.Register(r.PatchMethod, stub);
+                    AppendLog($"ON: {r.Desc} (auto-reasserted vs JIT)");
                 }
-                else { _engine.Injector!.UnhookEntry(r.PatchMethod); AppendLog($"OFF: {r.Desc}"); }
+                else { _sticky.Unregister(r.PatchMethod); AppendLog($"OFF: {r.Desc}"); }
                 break;
             case RowKind.UseHook:
                 if (r.Active)
@@ -635,9 +658,9 @@ public sealed class TmlForm : Form
             else if (r.Kind == RowKind.UseHook) { _engine.Injector?.UnhookUseSites(r.Field!.Name); }
             else if (r.Kind == RowKind.Tools) { _engine.RestoreFastTools(); }
             else if (r.Kind == RowKind.Craft) { foreach (var k in CraftKeys) _engine.Injector?.UnhookEntry(k); }
-            else if (r.Kind == RowKind.Patch) { _engine.Injector?.UnhookEntry(r.PatchMethod); }
+            else if (r.Kind == RowKind.Patch) { _sticky.Unregister(r.PatchMethod); }
             else if (r.Kind == RowKind.Vanity) { _engine.Injector?.UnhookVanityAccessories(); }
-            else if (r.Kind == RowKind.PatchSet) { foreach (var spec in r.PatchMethod.Split(';', StringSplitOptions.RemoveEmptyEntries)) _engine.Injector?.UnpatchSet(spec.Split(':')[0]); }
+            else if (r.Kind == RowKind.PatchSet) { foreach (var spec in r.PatchMethod.Split(';', StringSplitOptions.RemoveEmptyEntries)) _sticky.Unregister(spec.Split(':')[0]); }
             else if (r.Kind == RowKind.DropMult) { _engine.Injector?.UnhookDropMultiplier(); }
             else if (r.Kind == RowKind.Crate) { _engine.Injector?.UnhookAlwaysCrate(); }
         }

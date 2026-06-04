@@ -293,6 +293,100 @@ internal static class ClrDiscovery
                 Console.WriteLine($"  +0x{f.Offset:X3} (real 0x{f.Offset + 8:X3})  {f.Type?.Name,-20} {f.Name}");
     }
 
+    /// <summary>Read the live ItemDropDatabase and print the drop rules registered for one NPC id.</summary>
+    public static void ListNpcDrops(int pid, int npcId)
+    {
+        using var dt = DataTarget.CreateSnapshotAndAttach(pid);
+        using var runtime = dt.ClrVersions.First().CreateRuntime();
+
+        // Locate the singleton ItemDropDatabase via Main's static field.
+        var mainType = FindType(runtime, "Terraria.Main");
+        ClrObject db = default;
+        foreach (var sf in mainType!.StaticFields)
+        {
+            if (sf.Type?.Name?.Contains("ItemDropDatabase") != true) continue;
+            foreach (var d in runtime.AppDomains)
+            {
+                try { var o = sf.ReadObject(d); if (o.IsValid) { db = o; break; } } catch { }
+            }
+            if (db.IsValid) break;
+        }
+        if (!db.IsValid) { Console.WriteLine("ItemDropDatabase static not found."); return; }
+
+        var dict = db.ReadObjectField("_entriesByNpcNetId");
+        if (!dict.IsValid) { Console.WriteLine("_entriesByNpcNetId null."); return; }
+        int count = dict.ReadField<int>("_count");
+        var entries = dict.ReadObjectField("_entries");
+        if (!entries.IsValid) { Console.WriteLine("dict _entries null."); return; }
+        var arr = entries.AsArray();
+
+        ClrObject rules = default;
+        for (int i = 0; i < count; i++)
+        {
+            var e = arr.GetStructValue(i);
+            if (e.ReadField<int>("key") != npcId) continue;
+            rules = e.ReadObjectField("value");
+            break;
+        }
+        if (!rules.IsValid) { Console.WriteLine($"No drop entry for NPC id {npcId}."); return; }
+
+        int n = rules.ReadField<int>("_size");
+        var items = rules.ReadObjectField("_items").AsArray();
+        Console.WriteLine($"NPC {npcId}: {n} drop rule(s):");
+        for (int i = 0; i < n; i++)
+        {
+            var rule = items.GetObjectValue(i);
+            if (!rule.IsValid) continue;
+            DescribeRule(rule, "  ");
+        }
+    }
+
+    private static void DescribeRule(ClrObject rule, string indent)
+    {
+        string tn = rule.Type?.Name ?? "?";
+        string shortTn = tn.Contains('.') ? tn[(tn.LastIndexOf('.') + 1)..] : tn;
+        var sb = new System.Text.StringBuilder($"{indent}[{shortTn}]");
+        foreach (var f in rule.Type!.Fields)
+        {
+            if (f.Name == null) continue;
+            try
+            {
+                if (f.ElementType == ClrElementType.Int32)
+                    sb.Append($" {f.Name}={rule.ReadField<int>(f.Name)}");
+                else if (f.Type?.Name == "System.Int32[]")
+                {
+                    var a = rule.ReadObjectField(f.Name);
+                    if (a.IsValid) { var ar = a.AsArray(); var vals = new List<int>(); for (int k = 0; k < ar.Length && k < 12; k++) vals.Add(ar.GetValue<int>(k)); sb.Append($" {f.Name}=[{string.Join(",", vals)}]"); }
+                }
+            }
+            catch { }
+        }
+        Console.WriteLine(sb.ToString());
+    }
+
+    /// <summary>Scan EVERY type in every module for a method whose name contains <paramref name="methodName"/>.</summary>
+    public static void FindMethodEverywhere(int pid, string methodName)
+    {
+        using var dt = DataTarget.CreateSnapshotAndAttach(pid);
+        using var runtime = dt.ClrVersions.First().CreateRuntime();
+        int n = 0;
+        foreach (var mod in runtime.EnumerateModules())
+        {
+            foreach (var (mt, _) in mod.EnumerateTypeDefToMethodTableMap())
+            {
+                ClrType? t; try { t = runtime.GetTypeByMethodTable(mt); } catch { continue; }
+                if (t?.Name == null) continue;
+                foreach (var m in t.Methods)
+                {
+                    if (m.Name == null || !m.Name.Contains(methodName, StringComparison.OrdinalIgnoreCase) || m.NativeCode == 0) continue;
+                    Console.WriteLine($"  {t.Name}.{m.Name}  @0x{m.NativeCode:X}");
+                    n++;
+                }
+            }
+        }
+        Console.WriteLine($"total: {n}");
+    }
+
     public static void ListTypeFields(int pid, string typeName, string sub)
     {
         using var dt = DataTarget.CreateSnapshotAndAttach(pid);
@@ -334,6 +428,59 @@ internal static class ClrDiscovery
         {
             var row = code.Skip(i).Take(16).Select(b => b.ToString("X2"));
             Console.WriteLine($"  +0x{i:X4}: {string.Join(" ", row)}");
+        }
+    }
+
+    /// <summary>Resolve a method's CURRENT native-code address (re-reads JIT state via a fresh snapshot).</summary>
+    public static ulong ResolveMethodCode(int pid, string typeName, string methodName, string? sigContains = null)
+    {
+        using var dt = DataTarget.CreateSnapshotAndAttach(pid);
+        using var runtime = dt.ClrVersions.First().CreateRuntime();
+        var t = FindType(runtime, typeName);
+        var m = t?.Methods.FirstOrDefault(x => x.Name == methodName && x.NativeCode != 0
+            && (sigContains == null || (x.Signature?.Contains(sigContains) ?? false)));
+        return m?.NativeCode ?? 0;
+    }
+
+    /// <summary>Real x64 disassembly of a method via Iced, resolving call targets to method names.</summary>
+    public static void DisasmMethod(int pid, string methodName, string typeName, int maxBytes)
+    {
+        using var dt = DataTarget.CreateSnapshotAndAttach(pid);
+        using var runtime = dt.ClrVersions.First().CreateRuntime();
+        var t = FindType(runtime, typeName);
+        var m = t?.Methods.FirstOrDefault(x => x.Name == methodName && x.NativeCode != 0);
+        if (m == null) { Console.WriteLine($"{typeName}.{methodName} not found"); return; }
+        ulong addr = m.NativeCode;
+        int size = 0; try { size = (int)m.HotColdInfo.HotSize; } catch { }
+        if (size <= 0 || size > maxBytes) size = maxBytes;
+        Console.WriteLine($"{typeName}.{methodName} @0x{addr:X} size=0x{size:X}");
+
+        // Resolve call targets to method names: build an address->name map from the heap.
+        string NameAt(ulong target)
+        {
+            try { var mm = runtime.GetMethodByInstructionPointer(target); if (mm != null) return $"{mm.Type?.Name?.Split('.')[^1]}.{mm.Name}"; } catch { }
+            return $"0x{target:X}";
+        }
+
+        byte[] code = new byte[size + 16];
+        dt.DataReader.Read(addr, code);
+        var decoder = Iced.Intel.Decoder.Create(64, code, Iced.Intel.DecoderOptions.None);
+        decoder.IP = addr;
+        var fmt = new Iced.Intel.NasmFormatter();
+        var sb = new Iced.Intel.StringOutput();
+        ulong end = addr + (ulong)size;
+        while (decoder.IP < end)
+        {
+            var instr = decoder.Decode();
+            fmt.Format(instr, sb);
+            string text = sb.ToStringAndReset();
+            string note = "";
+            if (instr.FlowControl == Iced.Intel.FlowControl.Call || instr.FlowControl == Iced.Intel.FlowControl.IndirectCall)
+            {
+                if (instr.IsCallNear) note = "  -> " + NameAt(instr.NearBranchTarget);
+            }
+            string mark = (text.StartsWith("call") || text.StartsWith("j") && !text.StartsWith("jmp")) ? "*" : " ";
+            Console.WriteLine($"{mark} 0x{instr.IP:X}  +0x{instr.IP-addr:X3}  {text}{note}");
         }
     }
 

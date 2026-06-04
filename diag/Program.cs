@@ -103,6 +103,7 @@ if (mode == "patchm")
     System.IO.File.WriteAllText(stateFile, $"{meth.addr:X} {Convert.ToHexString(m.ReadBytes((IntPtr)meth.addr, n))}");
     bool ok = isFloat ? engine.Injector!.PatchReturnFloat(key, float.Parse(retv[1..])) : retv == "0" ? engine.Injector!.PatchReturnZero(key) : engine.Injector!.PatchReturnTrue(key);
     Console.WriteLine($">>> {key} @0x{meth.addr:X} patched to return {retv} ({ok}). Test it; `patchm off` to undo.");
+    Console.WriteLine($"    LIVE bytes now: {Convert.ToHexString(m.ReadBytes((IntPtr)meth.addr, n))}  (31C0C3 = xor eax;ret)");
     return 0;
 }
 
@@ -839,6 +840,65 @@ if (mode == "methods")
 if (mode == "itemfields")
 {
     ClrDiscovery.ListItemFields(proc.Id, args.Length > 1 ? args[1] : "");
+    return 0;
+}
+
+if (mode == "forcedrop")
+{
+    using var engine = new TmlEngine();
+    engine.Attach();
+    var m = engine.Mem!;
+    int secs = args.Length > 1 ? int.Parse(args[1]) : 40;
+    byte[] stub = { 0x31, 0xC0, 0xC3 }; // xor eax,eax; ret
+    var p = TmlDiscovery.FindProcess()!;
+    Console.WriteLine($"Re-patching Player.RollLuck every ~1.5s for {secs}s (defeats tiered-JIT moves). KILL ZOMBIES NOW.");
+    var seen = new HashSet<ulong>();
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    while (sw.Elapsed.TotalSeconds < secs)
+    {
+        ulong addr = ClrDiscovery.ResolveMethodCode(p.Id, "Terraria.Player", "RollLuck");
+        if (addr != 0)
+        {
+            var cur = m.ReadBytes((IntPtr)addr, 3);
+            if (!(cur[0] == 0x31 && cur[1] == 0xC0 && cur[2] == 0xC3))
+            {
+                m.WriteBytes((IntPtr)addr, stub);
+                if (seen.Add(addr)) Console.WriteLine($"  patched RollLuck @0x{addr:X} ({seen.Count} distinct code addr so far)");
+            }
+        }
+        System.Threading.Thread.Sleep(1500);
+    }
+    Console.WriteLine($"done. RollLuck was JITted at {seen.Count} distinct address(es) during the run.");
+    return 0;
+}
+
+if (mode == "disasm")
+{
+    ClrDiscovery.DisasmMethod(proc.Id,
+        args.Length > 1 ? args[1] : "TryDroppingItem",
+        args.Length > 2 ? args[2] : "Terraria.GameContent.ItemDropRules.CommonDrop",
+        args.Length > 3 ? Convert.ToInt32(args[3].Replace("0x",""), 16) : 0x300);
+    return 0;
+}
+
+if (mode == "npcdrops")
+{
+    ClrDiscovery.ListNpcDrops(proc.Id, args.Length > 1 ? int.Parse(args[1]) : 3);
+    return 0;
+}
+
+if (mode == "itemname")
+{
+    using var engine = new TmlEngine();
+    engine.Attach();
+    for (int i = 1; i < args.Length; i++)
+        if (int.TryParse(args[i], out var id)) Console.WriteLine($"  {id} = {engine.ItemName(id)}");
+    return 0;
+}
+
+if (mode == "findmethod")
+{
+    ClrDiscovery.FindMethodEverywhere(proc.Id, args.Length > 1 ? args[1] : "TryDroppingItem");
     return 0;
 }
 

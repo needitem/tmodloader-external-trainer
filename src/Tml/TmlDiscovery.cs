@@ -204,6 +204,7 @@ public static class TmlDiscovery
         if (size <= 0 || size > 0x40000) size = 0x1000;
         string shortType = typeName.Contains('.') ? typeName[(typeName.LastIndexOf('.') + 1)..] : typeName;
         model.Methods[$"{shortType}.{methodName}"] = (m.NativeCode, size);
+        model.MethodSources[$"{shortType}.{methodName}"] = (typeName, methodName);
     }
 
     /// <summary>Find the overload of a method whose signature contains <paramref name="sigContains"/>, store under <paramref name="key"/>.</summary>
@@ -217,6 +218,7 @@ public static class TmlDiscovery
         int size; try { size = (int)m.HotColdInfo.HotSize; } catch { size = 0; }
         if (size <= 0 || size > 0x40000) size = 0x1000;
         model.Methods[key] = (m.NativeCode, size);
+        model.MethodSources[key] = (typeName, methodName);
     }
 
     /// <summary>Collect EVERY JIT-compiled overload of a method name into model.MethodSets["Type.Method"].</summary>
@@ -235,6 +237,31 @@ public static class TmlDiscovery
         if (list.Count == 0) return;
         string shortType = typeName.Contains('.') ? typeName[(typeName.LastIndexOf('.') + 1)..] : typeName;
         model.MethodSets[$"{shortType}.{methodName}"] = list;
+        model.MethodSources[$"{shortType}.{methodName}"] = (typeName, methodName);
+    }
+
+    /// <summary>
+    /// Re-resolve the CURRENT native-code address(es) of methods by full type+name, via a fresh
+    /// snapshot. Used to follow .NET tiered-JIT relocations so patches can be re-applied.
+    /// Returns key -> every JIT-compiled overload address for that (type, method).
+    /// </summary>
+    public static Dictionary<string, List<ulong>> ResolveCurrentAddresses(int pid, IEnumerable<(string key, string type, string method)> reqs)
+    {
+        var result = new Dictionary<string, List<ulong>>();
+        using var dt = DataTarget.CreateSnapshotAndAttach(pid);
+        var clr = dt.ClrVersions.FirstOrDefault();
+        if (clr == null) return result;
+        using var runtime = clr.CreateRuntime();
+        foreach (var (key, type, method) in reqs)
+        {
+            var t = FindType(runtime, type);
+            if (t == null) continue;
+            var addrs = new List<ulong>();
+            foreach (var m in t.Methods)
+                if (m.Name == method && m.NativeCode != 0) addrs.Add(m.NativeCode);
+            if (addrs.Count > 0) result[key] = addrs;
+        }
+        return result;
     }
 
     private static int OffsetOf(ClrType t, string name, int fallback)

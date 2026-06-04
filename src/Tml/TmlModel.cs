@@ -29,6 +29,9 @@ public sealed class TmlModel
     public Dictionary<string, (ulong addr, int size)> Methods = new();
     // Methods that have multiple overloads we want to patch together (e.g. Player.Hurt, CheckMana).
     public Dictionary<string, List<(ulong addr, int size)>> MethodSets = new();
+    // short key ("Player.RollLuck") -> full type + method name, so a patch can be re-resolved
+    // after the .NET tiered JIT moves the code to a new address.
+    public Dictionary<string, (string type, string method)> MethodSources = new();
     public List<TmlField> PlayerFields = new();
     public Dictionary<string, int> ItemFields = new();
 
