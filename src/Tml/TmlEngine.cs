@@ -197,6 +197,18 @@ public sealed class TmlEngine : IDisposable
 
     public IntPtr BuffSlot(IntPtr arr, int i) => (IntPtr)(arr.ToInt64() + ArrayData + i * 4);
 
+    /// <summary>Remove a buff (by id) from the local player's buff array. Called at high freq to
+    /// suppress short-lived debuffs (Mana Sickness, etc.) effectively the moment they're applied.</summary>
+    public void ClearBuff(int buffId)
+    {
+        var (id, tm, len) = BuffArrays();
+        if (id == IntPtr.Zero || Mem == null) return;
+        if (len <= 0 || len > 64) len = 44;
+        for (int i = 0; i < len; i++)
+            if (Mem.ReadInt32(BuffSlot(id, i)) == buffId)
+            { Mem.WriteInt32(BuffSlot(id, i), 0); if (tm != IntPtr.Zero) Mem.WriteInt32(BuffSlot(tm, i), 0); }
+    }
+
     // ---- item / prefix names (from Terraria.Lang, localized, incl. modded) ----
 
     private readonly Dictionary<int, string> _itemNameCache = new();

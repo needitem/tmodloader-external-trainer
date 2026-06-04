@@ -6,27 +6,6 @@
   "cat": "Removals and Tools"
  },
  {
-  "id": "6100",
-  "name": "No Mana Sickness",
-  "mode": "clear",
-  "buff": 94,
-  "cat": "Removals and Tools"
- },
- {
-  "id": "6101",
-  "name": "No Potion Sickness",
-  "mode": "clear",
-  "buff": 21,
-  "cat": "Removals and Tools"
- },
- {
-  "id": "10807",
-  "name": "No Chaos Rod Cooldown",
-  "mode": "clear",
-  "buff": 88,
-  "cat": "Removals and Tools"
- },
- {
   "id": "9001",
   "name": "Magic Power (+20% magic damage)",
   "mode": "apply",
