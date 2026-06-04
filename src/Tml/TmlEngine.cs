@@ -42,10 +42,12 @@ public sealed class TmlEngine : IDisposable
         catch (Exception ex) { Log?.Invoke("Re-scan failed: " + ex.Message); return false; }
     }
 
-    public void Attach()
+    public void Attach() => Attach(null);
+
+    public void Attach(int? pid)
     {
         Detach();
-        var proc = TmlDiscovery.FindProcess()
+        var proc = (pid is int p ? System.Diagnostics.Process.GetProcessById(p) : TmlDiscovery.FindProcess())
                    ?? throw new InvalidOperationException("tModLoader is not running.");
         Proc = proc;
         Log?.Invoke($"Found tModLoader: PID {proc.Id}");

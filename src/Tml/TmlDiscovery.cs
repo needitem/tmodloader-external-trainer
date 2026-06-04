@@ -45,6 +45,31 @@ public static class TmlDiscovery
         });
     }
 
+    /// <summary>
+    /// Find the tModLoader DEDICATED SERVER process spawned by "Host &amp; Play" multiplayer.
+    /// In MP the world/NPC/loot logic runs here (a separate `dotnet tModLoader.dll -server`),
+    /// NOT in the client, so world-side cheats must target this process. Returns null in
+    /// singleplayer (no separate server).
+    /// </summary>
+    public static Process? FindServerProcess()
+    {
+        try
+        {
+            using var s = new System.Management.ManagementObjectSearcher(
+                "SELECT ProcessId, CommandLine FROM Win32_Process WHERE Name = 'dotnet.exe'");
+            foreach (System.Management.ManagementObject o in s.Get())
+            {
+                var cmd = o["CommandLine"] as string;
+                if (cmd == null || !cmd.Contains("tModLoader.dll")) continue;
+                if (!cmd.Contains(" -server")) continue;
+                int pid = Convert.ToInt32(o["ProcessId"]);
+                try { return Process.GetProcessById(pid); } catch { }
+            }
+        }
+        catch { /* WMI unavailable -> treat as singleplayer */ }
+        return null;
+    }
+
     public static TmlModel Discover(int pid)
     {
         using var dt = DataTarget.CreateSnapshotAndAttach(pid);

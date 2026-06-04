@@ -42,7 +42,7 @@
 
   { "group": "⛏️ Speed", "desc": "Fast Mining — all pickaxes/drills/axes/hammers (useTime→1)", "kind": "tools", "value": "1" },
 
-  { "group": "💰 Loot (method patch)", "desc": "100% Drop Rate / Best Luck", "kind": "patch", "method": "Player.RollLuck", "value": "0" },
+  { "group": "💰 Loot (method patch)", "desc": "100% Drop Rate — ME only (works on MP host server too)", "kind": "scopedrop" },
   { "group": "💰 Loot (method patch)", "desc": "Drop Multiplier (enemy loot stacks — edit the number)", "kind": "dropmult", "value": "5" },
 
   { "group": "🎒 Infinite Items (method patch)", "desc": "Infinite Consumables — potions/blocks/etc never run out", "kind": "patch", "method": "ItemLoader.ConsumeItem", "value": "0" },

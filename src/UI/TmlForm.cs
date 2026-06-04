@@ -28,6 +28,7 @@ public sealed class TmlForm : Form
     };
 
     private int _attachThrottle = 10; // attempt auto-attach on the first tick
+    private string _lastScopedStatus = "";
     private TmlField? _fLife, _fLifeMax, _fMana, _fManaMax;
 
     // High-frequency writer: per-frame-recomputed values (move/mine speed) must be written
@@ -38,6 +39,8 @@ public sealed class TmlForm : Form
     // Re-applies method-entry patches across .NET tiered-JIT relocations (every ~2.5s).
     private readonly StickyPatcher _sticky;
     private Thread? _stickyThread;
+    // "100% drop, only for me" — targets the MP host server process when present.
+    private readonly ScopedDropPatcher _scopedDrop;
 
     [DllImport("winmm.dll")] private static extern uint timeBeginPeriod(uint ms);
     [DllImport("winmm.dll")] private static extern uint timeEndPeriod(uint ms);
@@ -59,6 +62,7 @@ public sealed class TmlForm : Form
         Font = new Font("Segoe UI", 9f);
 
         _sticky = new StickyPatcher(_engine);
+        _scopedDrop = new ScopedDropPatcher(_engine);
         _engine.Log += AppendLog;
         _btnAttach.Click += (_, _) => DoAttach();
         _btnRescan.Click += (_, _) => DoRescan();
@@ -82,9 +86,9 @@ public sealed class TmlForm : Form
     {
         while (_writerRun)
         {
-            try { if (_engine.Attached && _sticky.AnyActive) _sticky.TickOnce(); }
-            catch { /* transient (snapshot race, process gone) */ }
-            Thread.Sleep(_sticky.AnyActive ? 2500 : 1000);
+            try { if (_engine.Attached && _sticky.AnyActive) _sticky.TickOnce(); } catch { }
+            try { if (_scopedDrop.Enabled) _scopedDrop.Tick(); } catch { }
+            Thread.Sleep(_sticky.AnyActive || _scopedDrop.Enabled ? 2500 : 1000);
         }
     }
 
@@ -297,6 +301,7 @@ public sealed class TmlForm : Form
                 _rows = CheatTable.Build(_engine.Model!, _buffs.Buffs, _engine.Injector);
             }
             _sticky.Clear(); // fresh process: drop any stale patched-address bookkeeping
+            _scopedDrop.Clear();
             CacheVitalFields();
             lock (_engine.Sync) LoadAndApplyConfig(); // restore previously-enabled cheats
             RebuildGrid();
@@ -448,6 +453,7 @@ public sealed class TmlForm : Form
         RowKind.PatchSet => "patch*",
         RowKind.DropMult => "drop×",
         RowKind.Crate => "fishing",
+        RowKind.ScopedDrop => "drop(me)",
         RowKind.Vanity => "vanity",
         RowKind.Action => "",
         RowKind.Value => r.Field!.Kind switch
@@ -559,6 +565,10 @@ public sealed class TmlForm : Form
                 }
                 else { _engine.Injector!.UnhookAlwaysCrate(); AppendLog($"OFF: {r.Desc}"); }
                 break;
+            case RowKind.ScopedDrop:
+                if (r.Active) { _scopedDrop.Enable(); AppendLog($"ON: {r.Desc} (auto-detects MP server, scoped to your character)"); }
+                else { _scopedDrop.Disable(); AppendLog($"OFF: {r.Desc}"); }
+                break;
             case RowKind.PatchSet:
                 if (r.Active)
                 {
@@ -663,6 +673,7 @@ public sealed class TmlForm : Form
             else if (r.Kind == RowKind.PatchSet) { foreach (var spec in r.PatchMethod.Split(';', StringSplitOptions.RemoveEmptyEntries)) _sticky.Unregister(spec.Split(':')[0]); }
             else if (r.Kind == RowKind.DropMult) { _engine.Injector?.UnhookDropMultiplier(); }
             else if (r.Kind == RowKind.Crate) { _engine.Injector?.UnhookAlwaysCrate(); }
+            else if (r.Kind == RowKind.ScopedDrop) { _scopedDrop.Disable(); }
         }
         foreach (DataGridViewRow gr in _grid.Rows)
             if (gr.Tag is CheatRow rr && rr.Kind != RowKind.GroupHeader)
@@ -697,6 +708,9 @@ public sealed class TmlForm : Form
             if (_engine.PlayerBase() == IntPtr.Zero) { _vitals.Text = "(load into a world)"; return; }
             _vitals.Text = VitalsText();
             _buffs.Tick(_engine); // buffs persist ~1h, slow tick is fine
+
+            if (_scopedDrop.Enabled && _scopedDrop.Status != _lastScopedStatus)
+            { _lastScopedStatus = _scopedDrop.Status; AppendLog($"[100% drop] {_lastScopedStatus}"); }
 
             // Fast-tools is asserted by the high-frequency writer (the held item is recomputed
             // every frame by Calamity, so a slow write loses). The slow tick re-snapshots

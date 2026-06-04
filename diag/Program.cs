@@ -78,6 +78,130 @@ if (mode == "tml")
     return 0;
 }
 
+if (mode == "scopeluck")
+{
+    int serverPid = int.Parse(args[1]);
+    int myIndex = args.Length > 2 ? int.Parse(args[2]) : 0;
+    int secs = args.Length > 3 ? int.Parse(args[3]) : 60;
+    using var engine = new TmlEngine();
+    engine.Attach(serverPid);
+    var m = engine.Mem!;
+    var p = engine.Proc!;
+
+    int PrologueLenIced(byte[] code, int min)
+    {
+        var dec = Iced.Intel.Decoder.Create(64, code, Iced.Intel.DecoderOptions.None);
+        int i = 0; while (i < min) { var ins = dec.Decode(); if (ins.IsInvalid) return 0; i += ins.Length; } return i;
+    }
+
+    IntPtr caveAddr = IntPtr.Zero; ulong hookedAt = 0;
+    void Install(ulong addr)
+    {
+        IntPtr entry = (IntPtr)addr;
+        var head = m.ReadBytes(entry, 24);
+        int disp = PrologueLenIced(head, 5);
+        if (disp < 5) { Console.WriteLine($"  prologue undecodable @0x{addr:X}"); return; }
+        IntPtr cave = m.AllocNear(entry, 0x80, TerrariaTrainer.Memory.Native.MemoryProtection.ExecuteReadWrite);
+        if (cave == IntPtr.Zero) { Console.WriteLine("  alloc failed"); return; }
+        var b = new List<byte>();
+        void E(params byte[] x) => b.AddRange(x);
+        void U32(int v) => b.AddRange(BitConverter.GetBytes(v));
+        E(0x81, 0x79, 0x10); U32(myIndex);          // cmp dword [rcx+0x10], myIndex
+        E(0x0F, 0x85); int jnePos = b.Count; U32(0); // jne ORIG (rel32 fixed after)
+        E(0x31, 0xC0, 0xC3);                         // xor eax,eax; ret  (me -> 0)
+        int origPos = b.Count;                       // ORIG label
+        b.AddRange(head.Take(disp));                 // displaced prologue
+        E(0xE9); U32((int)((entry.ToInt64() + disp) - (cave.ToInt64() + b.Count + 4))); // jmp back
+        var code = b.ToArray();
+        BitConverter.GetBytes(origPos - (jnePos + 4)).CopyTo(code, jnePos); // fix jne rel32
+        m.WriteBytes(cave, code);
+        var patch = new byte[disp];
+        patch[0] = 0xE9; BitConverter.GetBytes((int)(cave.ToInt64() - (entry.ToInt64() + 5))).CopyTo(patch, 1);
+        for (int k = 5; k < disp; k++) patch[k] = 0x90;
+        m.WriteBytes(entry, patch);
+        caveAddr = cave; hookedAt = addr;
+        Console.WriteLine($"  installed scoped cave @0x{addr:X} (disp={disp}) cave=0x{cave.ToInt64():X}");
+    }
+
+    Console.WriteLine($"Scoped 100% drop for whoAmI={myIndex} on server PID {serverPid}, {secs}s. KILL ZOMBIES.");
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    while (sw.Elapsed.TotalSeconds < secs)
+    {
+        ulong addr = ClrDiscovery.ResolveMethodCode(p.Id, "Terraria.Player", "RollLuck");
+        if (addr != 0)
+        {
+            var first = m.ReadBytes((IntPtr)addr, 1);
+            // reinstall if not hooked at this (current) address
+            if (addr != hookedAt || first[0] != 0xE9) Install(addr);
+        }
+        System.Threading.Thread.Sleep(1500);
+    }
+    Console.WriteLine("done.");
+    return 0;
+}
+
+if (mode == "findme")
+{
+    int clientPid = int.Parse(args[1]);
+    int serverPid = int.Parse(args[2]);
+    string ReadName(TerrariaTrainer.Memory.ProcessMemory mem, IntPtr player)
+    {
+        if (player == IntPtr.Zero) return "";
+        IntPtr s = mem.ReadPtr64((IntPtr)(player.ToInt64() + 0x88));
+        if (s == IntPtr.Zero) return "";
+        int len = mem.ReadInt32((IntPtr)(s.ToInt64() + 0x8));
+        if (len <= 0 || len > 60) return "";
+        var b = mem.ReadBytes((IntPtr)(s.ToInt64() + 0xC), len * 2);
+        return System.Text.Encoding.Unicode.GetString(b);
+    }
+    string myName;
+    using (var ce = new TmlEngine()) { ce.Attach(clientPid); IntPtr pb = ce.PlayerBase(); myName = ReadName(ce.Mem!, pb); Console.WriteLine($"client local player name = '{myName}'"); }
+    using (var se = new TmlEngine())
+    {
+        se.Attach(serverPid);
+        var m = se.Mem!;
+        IntPtr arr = m.ReadPtr64((IntPtr)se.Model!.StaticPlayerArray);
+        Console.WriteLine($"server Main.player[] @0x{arr.ToInt64():X}");
+        for (int i = 0; i < 256; i++)
+        {
+            IntPtr pl = m.ReadPtr64((IntPtr)(arr.ToInt64() + 0x10 + i * 8));
+            if (pl == IntPtr.Zero) continue;
+            int active = m.ReadByte((IntPtr)(pl.ToInt64() + se.Model!.PlayerFields.First(f => f.Name == "active").Offset));
+            string nm = ReadName(m, pl);
+            int who = m.ReadInt32((IntPtr)(pl.ToInt64() + 0x10));
+            if (nm.Length > 0 || active != 0)
+                Console.WriteLine($"  player[{i}] whoAmI={who} active={active} name='{nm}'{(nm == myName && myName.Length > 0 ? "  <== ME" : "")}");
+        }
+    }
+    return 0;
+}
+
+if (mode == "spatch")
+{
+    // server-targeted patch: spatch <pid> <key> <retv|off>   (no player-base requirement)
+    int pid = int.Parse(args[1]);
+    string key = args.Length > 2 ? args[2] : "Player.RollLuck";
+    string retv = args.Length > 3 ? args[3] : "0";
+    using var engine = new TmlEngine();
+    engine.Log += Console.WriteLine;
+    engine.Attach(pid);
+    var m = engine.Mem!;
+    if (!engine.Model!.Methods.TryGetValue(key, out var meth)) { Console.WriteLine($"{key} NOT discovered on PID {pid}!"); return 0; }
+    string stateFile = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"spatch_{pid}.txt");
+    if (retv == "off")
+    {
+        if (System.IO.File.Exists(stateFile)) { var p = System.IO.File.ReadAllText(stateFile).Split(' '); m.WriteBytes((IntPtr)Convert.ToInt64(p[0],16), Convert.FromHexString(p[1])); System.IO.File.Delete(stateFile); Console.WriteLine("restored."); }
+        else Console.WriteLine("no state.");
+        return 0;
+    }
+    bool isFloat = retv.StartsWith("f");
+    int n = isFloat ? 10 : (retv == "0" ? 3 : 6);
+    System.IO.File.WriteAllText(stateFile, $"{meth.addr:X} {Convert.ToHexString(m.ReadBytes((IntPtr)meth.addr, n))}");
+    bool ok = isFloat ? engine.Injector!.PatchReturnFloat(key, float.Parse(retv[1..])) : retv == "0" ? engine.Injector!.PatchReturnZero(key) : engine.Injector!.PatchReturnTrue(key);
+    Console.WriteLine($">>> [PID {pid}] {key} @0x{meth.addr:X} -> return {retv} ({ok}). LIVE: {Convert.ToHexString(m.ReadBytes((IntPtr)meth.addr, n))}");
+    return 0;
+}
+
 if (mode == "patchm")
 {
     using var engine = new TmlEngine();
@@ -845,13 +969,14 @@ if (mode == "itemfields")
 
 if (mode == "forcedrop")
 {
-    using var engine = new TmlEngine();
-    engine.Attach();
-    var m = engine.Mem!;
     int secs = args.Length > 1 ? int.Parse(args[1]) : 40;
+    int? targetPid = args.Length > 2 ? int.Parse(args[2]) : (int?)null;
+    using var engine = new TmlEngine();
+    engine.Attach(targetPid);
+    var m = engine.Mem!;
     byte[] stub = { 0x31, 0xC0, 0xC3 }; // xor eax,eax; ret
-    var p = TmlDiscovery.FindProcess()!;
-    Console.WriteLine($"Re-patching Player.RollLuck every ~1.5s for {secs}s (defeats tiered-JIT moves). KILL ZOMBIES NOW.");
+    var p = engine.Proc!;
+    Console.WriteLine($"Re-patching Player.RollLuck on PID {p.Id} every ~1.5s for {secs}s (defeats tiered-JIT). KILL ZOMBIES NOW.");
     var seen = new HashSet<ulong>();
     var sw = System.Diagnostics.Stopwatch.StartNew();
     while (sw.Elapsed.TotalSeconds < secs)
