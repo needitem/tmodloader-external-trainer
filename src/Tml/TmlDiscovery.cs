@@ -162,6 +162,7 @@ public static class TmlDiscovery
             try { size = (int)method.HotColdInfo.HotSize; } catch { size = 0; }
             if (size <= 0 || size > 0x40000) size = 0x4000;
             model.Methods[method.Name] = (method.NativeCode, size);
+            model.MethodSources[method.Name] = ("Terraria.Player", method.Name);
         }
 
         // Cross-type methods we patch (e.g. force a condition check to return true).

@@ -543,6 +543,7 @@ public sealed class TmlForm : Form
             case RowKind.Vanity:
                 if (r.Active)
                 {
+                    _engine.RefreshMethodAddress("UpdateEquips"); _engine.RefreshMethodAddress("ApplyEquipFunctional");
                     if (_engine.Injector!.HookVanityAccessories()) AppendLog($"ON: {r.Desc} (vanity/social accessory slots now functional)");
                     else { r.Active = false; if (grow != null) grow.Cells["active"].Value = false; AppendLog($"Failed: {r.Desc}"); }
                 }
@@ -552,6 +553,7 @@ public sealed class TmlForm : Form
                 if (r.Active)
                 {
                     int f = int.TryParse(r.InjectValue, out var fv) ? fv : 5;
+                    _engine.RefreshMethodAddress("CommonCode.DropItem"); // follow tiered-JIT relocation
                     if (_engine.Injector!.HookDropMultiplier(f)) AppendLog($"ON: {r.Desc} (loot stacks x{f})");
                     else { r.Active = false; if (grow != null) grow.Cells["active"].Value = false; AppendLog($"Failed: {r.Desc}"); }
                 }
@@ -560,6 +562,7 @@ public sealed class TmlForm : Form
             case RowKind.Crate:
                 if (r.Active)
                 {
+                    _engine.RefreshMethodAddress("Projectile.FishingCheck_RollItemDrop"); // follow tiered-JIT relocation
                     if (_engine.Injector!.HookAlwaysCrate()) AppendLog($"ON: {r.Desc}");
                     else { r.Active = false; if (grow != null) grow.Cells["active"].Value = false; AppendLog($"Failed: {r.Desc}"); }
                 }

@@ -28,6 +28,26 @@ public sealed class TmlEngine : IDisposable
     private static readonly System.Globalization.CultureInfo Inv = System.Globalization.CultureInfo.InvariantCulture;
 
     /// <summary>Re-run ClrMD discovery (recovers after a world reload / GC move of static base).</summary>
+    /// <summary>
+    /// Re-resolve ONE method's current native-code address (cheap, no full re-scan) so a cave/patch
+    /// installs at the live code after the .NET tiered JIT relocated it. Updates model.Methods[key].
+    /// </summary>
+    public void RefreshMethodAddress(string key)
+    {
+        if (Model == null || Proc == null) return;
+        if (!Model.MethodSources.TryGetValue(key, out var src)) return;
+        try
+        {
+            var cur = TmlDiscovery.ResolveCurrentAddresses(Proc.Id, new[] { (key, src.type, src.method) });
+            if (cur.TryGetValue(key, out var list) && list.Count > 0)
+            {
+                int size = Model.Methods.TryGetValue(key, out var m) ? m.size : 0x4000;
+                Model.Methods[key] = (list[0], size);
+            }
+        }
+        catch { /* best effort */ }
+    }
+
     public bool Rediscover()
     {
         if (Proc == null) return false;
