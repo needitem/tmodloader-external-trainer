@@ -21,3 +21,6 @@ publish/
 # Lock-avoidance build output
 build2/
 /tmp/
+
+# release zips (uploaded to GitHub releases, not tracked)
+*.zip
