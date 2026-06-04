@@ -361,7 +361,7 @@ public sealed class TmlForm : Form
             {
                 if (r.Kind is RowKind.GroupHeader or RowKind.Action || !r.Active) continue;
                 data[r.Desc] = r.Kind == RowKind.Value ? (r.FrozenText ?? "")
-                    : r.Kind == RowKind.DropMult ? r.InjectValue
+                    : r.Kind is RowKind.DropMult or RowKind.PatchInt ? r.InjectValue
                     : "on";
             }
             System.IO.File.WriteAllText(ConfigPath,
@@ -388,7 +388,7 @@ public sealed class TmlForm : Form
             if (!data.TryGetValue(r.Desc, out var saved)) continue;
             r.Active = true;
             if (r.Kind == RowKind.Value) r.FrozenText = saved;
-            else if (r.Kind == RowKind.DropMult && int.TryParse(saved, out _)) r.InjectValue = saved;
+            else if (r.Kind is RowKind.DropMult or RowKind.PatchInt && saved.Length > 0 && int.TryParse(saved, out _)) r.InjectValue = saved;
             try { ApplyActiveChange(r, null); applied++; }
             catch { r.Active = false; }
         }
@@ -434,9 +434,9 @@ public sealed class TmlForm : Form
                 row.Cells["type"].Value = TypeLabel(r);
                 row.Cells["value"].Value = r.Kind == RowKind.Action ? "▶ click On"
                     : r.Kind == RowKind.Value ? (r.FrozenText ?? "—")
-                    : r.Kind == RowKind.DropMult ? r.InjectValue
+                    : r.Kind is RowKind.DropMult or RowKind.PatchInt ? r.InjectValue
                     : "—";
-                row.Cells["value"].ReadOnly = r.Kind != RowKind.Value && r.Kind != RowKind.DropMult;
+                row.Cells["value"].ReadOnly = r.Kind is not (RowKind.Value or RowKind.DropMult or RowKind.PatchInt);
             }
         }
         _grid.ResumeLayout();
@@ -454,6 +454,7 @@ public sealed class TmlForm : Form
         RowKind.Patch => "patch",
         RowKind.PatchSet => "patch*",
         RowKind.DropMult => "drop×",
+        RowKind.PatchInt => "value",
         RowKind.Crate => "fishing",
         RowKind.ScopedDrop => "drop(me)",
         RowKind.BuffClear => "no-debuff",
@@ -579,6 +580,10 @@ public sealed class TmlForm : Form
                 // the high-frequency writer removes the buff each tick while active.
                 AppendLog($"{(r.Active ? "Enabled" : "Disabled")} {r.Desc}");
                 break;
+            case RowKind.PatchInt:
+                if (r.Active) { _sticky.Register(r.PatchMethod, RetInt(int.TryParse(r.InjectValue, out var pv) ? pv : 0)); AppendLog($"ON: {r.Desc} = {r.InjectValue}"); }
+                else { _sticky.Unregister(r.PatchMethod); AppendLog($"OFF: {r.Desc}"); }
+                break;
             case RowKind.PatchSet:
                 if (r.Active)
                 {
@@ -633,7 +638,7 @@ public sealed class TmlForm : Form
     {
         if (e.RowIndex < 0) return;
         var grow = _grid.Rows[e.RowIndex];
-        if (grow.Tag is not CheatRow r || (r.Kind != RowKind.Value && r.Kind != RowKind.DropMult)) return;
+        if (grow.Tag is not CheatRow r || r.Kind is not (RowKind.Value or RowKind.DropMult or RowKind.PatchInt)) return;
         if (_grid.Columns[e.ColumnIndex].Name == "value")
         {
             _grid.BeginEdit(true);
@@ -652,6 +657,14 @@ public sealed class TmlForm : Form
             if (!int.TryParse(text.Trim(), out var f) || f < 1) { f = 1; grow.Cells["value"].Value = "1"; }
             r.InjectValue = f.ToString();
             if (r.Active) lock (_engine.Sync) { _engine.Injector!.HookDropMultiplier(f); AppendLog($"Drop multiplier set to x{f}"); }
+            SaveConfig();
+            return;
+        }
+        if (r.Kind == RowKind.PatchInt)
+        {
+            if (!int.TryParse(text.Trim(), out var v) || v < 0) { v = 0; grow.Cells["value"].Value = "0"; }
+            r.InjectValue = v.ToString();
+            if (r.Active) { _sticky.Unregister(r.PatchMethod); _sticky.Register(r.PatchMethod, RetInt(v)); AppendLog($"{r.Desc} set to {v}"); }
             SaveConfig();
             return;
         }
@@ -678,7 +691,7 @@ public sealed class TmlForm : Form
             else if (r.Kind == RowKind.UseHook) { _engine.Injector?.UnhookUseSites(r.Field!.Name); }
             else if (r.Kind == RowKind.Tools) { _engine.RestoreFastTools(); }
             else if (r.Kind == RowKind.Craft) { foreach (var k in CraftKeys) _engine.Injector?.UnhookEntry(k); }
-            else if (r.Kind == RowKind.Patch) { _sticky.Unregister(r.PatchMethod); }
+            else if (r.Kind is RowKind.Patch or RowKind.PatchInt) { _sticky.Unregister(r.PatchMethod); }
             else if (r.Kind == RowKind.Vanity) { _engine.Injector?.UnhookVanityAccessories(); }
             else if (r.Kind == RowKind.PatchSet) { foreach (var spec in r.PatchMethod.Split(';', StringSplitOptions.RemoveEmptyEntries)) _sticky.Unregister(spec.Split(':')[0]); }
             else if (r.Kind == RowKind.DropMult) { _engine.Injector?.UnhookDropMultiplier(); }

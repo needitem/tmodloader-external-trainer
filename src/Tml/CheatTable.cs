@@ -4,7 +4,7 @@ using TerrariaTrainer.Cheats;
 
 namespace TerrariaTrainer.Tml;
 
-public enum RowKind { GroupHeader, Value, Toggle, Buff, Action, Inject, Fast, UseHook, Tools, Craft, Patch, Vanity, PatchSet, DropMult, Crate, ScopedDrop, BuffClear }
+public enum RowKind { GroupHeader, Value, Toggle, Buff, Action, Inject, Fast, UseHook, Tools, Craft, Patch, Vanity, PatchSet, DropMult, Crate, ScopedDrop, BuffClear, PatchInt }
 
 /// <summary>A single row in the Cheat-Engine-style table.</summary>
 public sealed class CheatRow
@@ -60,6 +60,13 @@ public static class CheatTable
             {
                 EmitGroup(rows, ref lastGroup, d.Group);
                 rows.Add(new CheatRow { Kind = RowKind.Craft, Group = d.Group, Desc = d.Desc });
+                continue;
+            }
+            if (d.Kind.Equals("patchint", StringComparison.OrdinalIgnoreCase))
+            {
+                if (injector == null || d.Method == null || !injector.CanPatch(d.Method)) continue;
+                EmitGroup(rows, ref lastGroup, d.Group);
+                rows.Add(new CheatRow { Kind = RowKind.PatchInt, Group = d.Group, Desc = d.Desc, PatchMethod = d.Method, InjectValue = d.Value ?? "2000" });
                 continue;
             }
             if (d.Kind.Equals("buffclear", StringComparison.OrdinalIgnoreCase))
