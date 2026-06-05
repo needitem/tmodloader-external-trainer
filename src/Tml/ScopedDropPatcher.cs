@@ -80,7 +80,13 @@ public sealed class ScopedDropPatcher
             _myWho = ResolveMyIndex();
         }
         if (_mem == null) { _status = "no mem"; return; }
-        if (_myWho < 0) { _myWho = ResolveMyIndex(); if (_myWho < 0) { _status = "waiting for player"; return; } }
+
+        // SAFETY: re-verify MY index every tick (by name). If my slot changed (reconnect) the
+        // cave is rebuilt for the new index; if I'm not in this world the cave is REMOVED — so a
+        // different player who later occupies my old slot can never inherit my 100% drop.
+        int who = ResolveMyIndex();
+        if (who < 0) { Restore(); _myWho = -1; _status = "you are not in this world — drop OFF (others safe)"; return; }
+        if (who != _myWho) { _myWho = who; Restore(); } // rebuild cave with the corrected index
 
         var cur = TmlDiscovery.ResolveCurrentAddresses(_targetPid, new[] { ("RollLuck", "Terraria.Player", "RollLuck") });
         if (!cur.TryGetValue("RollLuck", out var list) || list.Count == 0) { _status = "RollLuck not jitted"; return; }
