@@ -5,18 +5,26 @@ using TerrariaTrainer.Memory;
 namespace TerrariaTrainer.Tml;
 
 /// <summary>
-/// "100% drop, but only for ME" — even on a multiplayer Host &amp; Play server.
+/// "100% drop, but only for mobs I DAMAGED" — even on a multiplayer Host &amp; Play server.
 ///
 /// In MP the loot is rolled on the dedicated SERVER process (a separate `dotnet tModLoader.dll
-/// -server`), not the client, so a client-side patch never reaches it. This patcher:
-///   1. picks the right process (server if hosting MP, else the client for singleplayer),
-///   2. finds MY player index there (Main.myPlayer in SP; name-match in MP),
-///   3. installs a conditional cave at Player.RollLuck that returns 0 ONLY when the rolling
-///      player's whoAmI == mine (so only my kills drop 100%; other players are unaffected),
-///   4. re-asserts every tick so the .NET tiered JIT can't relocate past it.
+/// -server`), not the client, so a client-side patch never reaches it. Worse, the server credits
+/// loot to the CLOSEST player, so just standing near a mob that dies on its own would otherwise
+/// trigger the 100% drop. To avoid that, two caves cooperate via a shared flag byte:
+///   • TryDropping cave: per NPC-loot, set flag = npc.playerInteraction[myWho] (did I/my-minions
+///     damage THIS npc).
+///   • RollLuck cave: force the roll to 0 ONLY when (rolling player.whoAmI == mine) AND flag == 1.
+/// So only mobs I actually damaged drop 100%; untouched nearby deaths and other players' kills
+/// roll normally. The index is re-verified by name every tick and the caves are re-asserted so the
+/// tiered JIT can't relocate past them; if I'm not in the world the caves are removed (others safe).
 /// </summary>
 public sealed class ScopedDropPatcher
 {
+    private const int WhoAmIOff = 0x10;          // Player.whoAmI
+    private const int InfoNpcOff = 0x00;         // DropAttemptInfo.npc  (rdx points at &info)
+    private const int NpcInteractionOff = 0x50;  // NPC.playerInteraction (bool[])
+    private const int ArrData = 0x10;            // managed array data start (bool[] -> 1 byte each)
+
     private readonly TmlEngine _client;
     private readonly object _lock = new();
     private volatile bool _enabled;
@@ -26,11 +34,13 @@ public sealed class ScopedDropPatcher
     private ulong _playerArray, _myPlayerStatic;
     private bool _isServer;
     private int _myWho = -1;
-    private ulong _hookedAt;
-    private IntPtr _cave;
-    private byte[]? _savedEntry;
-    private ulong _savedEntryAddr;
+    private IntPtr _flag;                         // shared "I damaged this npc" byte
     private string _status = "off";
+
+    // one installed cave (entry patch + relocatable trampoline)
+    private sealed class Hook { public IntPtr Cave; public ulong At; public byte[]? Orig; public ulong OrigAddr; }
+    private readonly Hook _rl = new();            // Player.RollLuck
+    private readonly Hook _td = new();            // ItemDropResolver.TryDropping
 
     public ScopedDropPatcher(TmlEngine client) => _client = client;
 
@@ -38,14 +48,10 @@ public sealed class ScopedDropPatcher
     public string Status { get { lock (_lock) return _status; } }
 
     public void Enable() => _enabled = true;
-
-    public void Disable()
-    {
-        lock (_lock) { _enabled = false; Restore(); ResetTarget(); _status = "off"; }
-    }
+    public void Disable() { lock (_lock) { _enabled = false; RestoreAll(); ResetTarget(); _status = "off"; } }
 
     /// <summary>Drop all state without touching memory (e.g. when the client detaches).</summary>
-    public void Clear() { lock (_lock) { _savedEntry = null; _cave = IntPtr.Zero; _hookedAt = 0; ResetTarget(); } }
+    public void Clear() { lock (_lock) { _rl.Orig = null; _rl.Cave = IntPtr.Zero; _rl.At = 0; _td.Orig = null; _td.Cave = IntPtr.Zero; _td.At = 0; _flag = IntPtr.Zero; ResetTarget(); } }
 
     private void ResetTarget()
     {
@@ -69,11 +75,10 @@ public sealed class ScopedDropPatcher
 
         if (wantPid != _targetPid)
         {
-            Restore(); ResetTarget();
+            RestoreAll(); ResetTarget();
             _targetPid = wantPid;
             _isServer = server != null;
-            var proc = Process.GetProcessById(wantPid);
-            _mem = ProcessMemory.Attach(proc);
+            _mem = ProcessMemory.Attach(Process.GetProcessById(wantPid));
             var model = TmlDiscovery.Discover(wantPid);
             _playerArray = model.StaticPlayerArray;
             _myPlayerStatic = model.StaticMyPlayer;
@@ -81,20 +86,37 @@ public sealed class ScopedDropPatcher
         }
         if (_mem == null) { _status = "no mem"; return; }
 
-        // SAFETY: re-verify MY index every tick (by name). If my slot changed (reconnect) the
-        // cave is rebuilt for the new index; if I'm not in this world the cave is REMOVED — so a
-        // different player who later occupies my old slot can never inherit my 100% drop.
+        // SAFETY: re-verify MY index by name every tick. Slot changed -> rebuild; gone -> remove.
         int who = ResolveMyIndex();
-        if (who < 0) { Restore(); _myWho = -1; _status = "you are not in this world — drop OFF (others safe)"; return; }
-        if (who != _myWho) { _myWho = who; Restore(); } // rebuild cave with the corrected index
+        if (who < 0) { RestoreAll(); _myWho = -1; _status = "you are not in this world — drop OFF (others safe)"; return; }
+        if (who != _myWho) { _myWho = who; RestoreAll(); }
 
-        var cur = TmlDiscovery.ResolveCurrentAddresses(_targetPid, new[] { ("RollLuck", "Terraria.Player", "RollLuck") });
-        if (!cur.TryGetValue("RollLuck", out var list) || list.Count == 0) { _status = "RollLuck not jitted"; return; }
-        ulong addr = list[0];
-        byte first;
-        try { first = _mem.ReadByte((IntPtr)addr); } catch { return; }
-        if (addr != _hookedAt || first != 0xE9) InstallCave(addr);
-        _status = $"{(_isServer ? "server" : "client")} pid {_targetPid}, whoAmI {_myWho} — active";
+        var cur = TmlDiscovery.ResolveCurrentAddresses(_targetPid, new[]
+        {
+            ("rl", "Terraria.Player", "RollLuck"),
+            ("td", "Terraria.GameContent.ItemDropRules.ItemDropResolver", "TryDropping"),
+        });
+        if (!cur.TryGetValue("rl", out var rlList) || rlList.Count == 0) { _status = "RollLuck not jitted"; return; }
+        ulong rlAddr = rlList[0];
+
+        // allocate the shared flag once (near RollLuck)
+        if (_flag == IntPtr.Zero)
+        {
+            _flag = _mem.AllocNear((IntPtr)rlAddr, 8, Native.MemoryProtection.ExecuteReadWrite);
+            if (_flag == IntPtr.Zero) { _status = "flag alloc failed"; return; }
+        }
+
+        if (!IsHooked(_rl, rlAddr)) InstallRollLuckCave(rlAddr);
+        if (cur.TryGetValue("td", out var tdList) && tdList.Count > 0 && !IsHooked(_td, tdList[0]))
+            InstallTryDroppingCave(tdList[0]);
+
+        _status = $"{(_isServer ? "server" : "client")} pid {_targetPid}, whoAmI {_myWho} — active (damaged mobs only)";
+    }
+
+    private bool IsHooked(Hook h, ulong addr)
+    {
+        if (h.At != addr || h.Cave == IntPtr.Zero) return false;
+        try { return _mem!.ReadByte((IntPtr)addr) == 0xE9; } catch { return false; }
     }
 
     private int ResolveMyIndex()
@@ -108,7 +130,7 @@ public sealed class ScopedDropPatcher
             if (arr == IntPtr.Zero) return -1;
             for (int i = 0; i < 256; i++)
             {
-                IntPtr pl = _mem.ReadPtr64((IntPtr)(arr.ToInt64() + 0x10 + i * 8));
+                IntPtr pl = _mem.ReadPtr64((IntPtr)(arr.ToInt64() + ArrData + i * 8));
                 if (pl != IntPtr.Zero && ReadName(_mem, pl) == myName) return i;
             }
         }
@@ -130,26 +152,71 @@ public sealed class ScopedDropPatcher
         catch { return ""; }
     }
 
-    private void InstallCave(ulong addr)
+    // ---- cave A: RollLuck. force 0 only when (this.whoAmI == myWho) AND flag != 0 ----
+    private void InstallRollLuckCave(ulong addr)
+    {
+        var (mem, entry, head, disp, cave) = BeginCave(addr);
+        if (cave == IntPtr.Zero) return;
+        var b = new List<byte>(); void E(params byte[] x) => b.AddRange(x); void U32(int v) => b.AddRange(BitConverter.GetBytes(v));
+        E(0x81, 0x79, WhoAmIOff); U32(_myWho);          // cmp dword [rcx+whoAmI], myWho
+        E(0x0F, 0x85); int j1 = b.Count; U32(0);         // jne ORIG
+        E(0x49, 0xBB); b.AddRange(BitConverter.GetBytes(_flag.ToInt64())); // mov r11, flag
+        E(0x41, 0x80, 0x3B, 0x00);                       // cmp byte [r11], 0
+        E(0x0F, 0x84); int j2 = b.Count; U32(0);         // je ORIG
+        E(0x31, 0xC0, 0xC3);                             // xor eax,eax; ret   (me + damaged -> 0)
+        int orig = b.Count;
+        FinishCave(mem, entry, head, disp, cave, b, _rl, addr, (code) =>
+        {
+            BitConverter.GetBytes(orig - (j1 + 4)).CopyTo(code, j1);
+            BitConverter.GetBytes(orig - (j2 + 4)).CopyTo(code, j2);
+        });
+    }
+
+    // ---- cave B: TryDropping. flag = info.npc.playerInteraction[myWho] (did I damage this npc) ----
+    private void InstallTryDroppingCave(ulong addr)
+    {
+        var (mem, entry, head, disp, cave) = BeginCave(addr);
+        if (cave == IntPtr.Zero) return;
+        long flagA = _flag.ToInt64();
+        var b = new List<byte>(); void E(params byte[] x) => b.AddRange(x); void U32(int v) => b.AddRange(BitConverter.GetBytes(v));
+        E(0x50, 0x41, 0x53);                             // push rax; push r11
+        E(0x48, 0x8B, 0x02);                             // mov rax, [rdx]   (info.npc; InfoNpcOff=0)
+        E(0x48, 0x85, 0xC0); E(0x0F, 0x84); int jc1 = b.Count; U32(0);     // test rax,rax; jz CLR
+        E(0x48, 0x8B, 0x40, NpcInteractionOff);          // mov rax, [rax+0x50]  (playerInteraction[])
+        E(0x48, 0x85, 0xC0); E(0x0F, 0x84); int jc2 = b.Count; U32(0);     // test rax,rax; jz CLR
+        E(0x0F, 0xB6, 0x80); U32(ArrData + _myWho);      // movzx eax, byte [rax + 0x10 + myWho]
+        E(0x49, 0xBB); b.AddRange(BitConverter.GetBytes(flagA)); E(0x41, 0x88, 0x03); // mov r11,flag; mov [r11],al
+        E(0xE9); int jdone = b.Count; U32(0);            // jmp DONE
+        int clr = b.Count;
+        E(0x49, 0xBB); b.AddRange(BitConverter.GetBytes(flagA)); E(0x41, 0xC6, 0x03, 0x00); // mov r11,flag; mov byte[r11],0
+        int done = b.Count;
+        E(0x41, 0x5B, 0x58);                             // pop r11; pop rax
+        FinishCave(mem, entry, head, disp, cave, b, _td, addr, (code) =>
+        {
+            BitConverter.GetBytes(clr - (jc1 + 4)).CopyTo(code, jc1);
+            BitConverter.GetBytes(clr - (jc2 + 4)).CopyTo(code, jc2);
+            BitConverter.GetBytes(done - (jdone + 4)).CopyTo(code, jdone);
+        });
+    }
+
+    private (ProcessMemory mem, IntPtr entry, byte[] head, int disp, IntPtr cave) BeginCave(ulong addr)
     {
         var mem = _mem!;
         IntPtr entry = (IntPtr)addr;
         var head = mem.ReadBytes(entry, 24);
         int disp = PrologueLen(head, 5);
-        if (disp < 5) { _status = "prologue undecodable"; return; }
-        IntPtr cave = mem.AllocNear(entry, 0x80, Native.MemoryProtection.ExecuteReadWrite);
-        if (cave == IntPtr.Zero) { _status = "alloc failed"; return; }
+        if (disp < 5) { _status = "prologue undecodable"; return (mem, entry, head, 0, IntPtr.Zero); }
+        IntPtr cave = mem.AllocNear(entry, 0x90, Native.MemoryProtection.ExecuteReadWrite);
+        if (cave == IntPtr.Zero) _status = "alloc failed";
+        return (mem, entry, head, disp, cave);
+    }
 
-        var b = new List<byte>();
-        void U32(int v) => b.AddRange(BitConverter.GetBytes(v));
-        b.AddRange(new byte[] { 0x81, 0x79, 0x10 }); U32(_myWho);       // cmp dword [rcx+0x10], myWho  (whoAmI)
-        b.AddRange(new byte[] { 0x0F, 0x85 }); int jne = b.Count; U32(0); // jne ORIG
-        b.AddRange(new byte[] { 0x31, 0xC0, 0xC3 });                    // xor eax,eax; ret   (me -> 0)
-        int orig = b.Count;
-        b.AddRange(head.Take(disp));                                    // displaced prologue
-        b.Add(0xE9); U32((int)((entry.ToInt64() + disp) - (cave.ToInt64() + b.Count + 4)));
+    private void FinishCave(ProcessMemory mem, IntPtr entry, byte[] head, int disp, IntPtr cave, List<byte> b, Hook h, ulong addr, Action<byte[]> fixups)
+    {
+        b.AddRange(head.Take(disp));                                  // displaced prologue
+        b.Add(0xE9); b.AddRange(BitConverter.GetBytes((int)((entry.ToInt64() + disp) - (cave.ToInt64() + b.Count + 4))));
         var code = b.ToArray();
-        BitConverter.GetBytes(orig - (jne + 4)).CopyTo(code, jne);
+        fixups(code);                                                // patch the internal jump rel32s
         mem.WriteBytes(cave, code);
 
         var patch = new byte[disp];
@@ -157,18 +224,24 @@ public sealed class ScopedDropPatcher
         BitConverter.GetBytes((int)(cave.ToInt64() - (entry.ToInt64() + 5))).CopyTo(patch, 1);
         for (int k = 5; k < disp; k++) patch[k] = 0x90;
 
-        if (_cave != IntPtr.Zero && _cave != cave) { try { mem.Free(_cave); } catch { } }
-        _savedEntry = head.Take(disp).ToArray(); _savedEntryAddr = addr; // for restore
+        if (h.Cave != IntPtr.Zero && h.Cave != cave) { try { mem.Free(h.Cave); } catch { } }
+        h.Orig = head.Take(disp).ToArray(); h.OrigAddr = addr;
         mem.WriteBytes(entry, patch);
-        _cave = cave; _hookedAt = addr;
+        h.Cave = cave; h.At = addr;
     }
 
-    private void Restore()
+    private void RestoreAll()
     {
-        if (_mem != null && _savedEntry != null && _savedEntryAddr != 0)
-            try { _mem.WriteBytes((IntPtr)_savedEntryAddr, _savedEntry); } catch { }
-        if (_mem != null && _cave != IntPtr.Zero) try { _mem.Free(_cave); } catch { }
-        _savedEntry = null; _savedEntryAddr = 0; _cave = IntPtr.Zero; _hookedAt = 0;
+        RestoreHook(_rl); RestoreHook(_td);
+        if (_mem != null && _flag != IntPtr.Zero) { try { _mem.Free(_flag); } catch { } }
+        _flag = IntPtr.Zero;
+    }
+
+    private void RestoreHook(Hook h)
+    {
+        if (_mem != null && h.Orig != null && h.OrigAddr != 0) try { _mem.WriteBytes((IntPtr)h.OrigAddr, h.Orig); } catch { }
+        if (_mem != null && h.Cave != IntPtr.Zero) try { _mem.Free(h.Cave); } catch { }
+        h.Orig = null; h.OrigAddr = 0; h.Cave = IntPtr.Zero; h.At = 0;
     }
 
     private static int PrologueLen(byte[] code, int min)

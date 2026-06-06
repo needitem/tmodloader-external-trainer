@@ -78,6 +78,93 @@ if (mode == "tml")
     return 0;
 }
 
+if (mode == "scopeluck2")
+{
+    // PoC: force 100% drop ONLY for NPCs I damaged (npc.playerInteraction[myIdx]) AND attributed to me.
+    int serverPid = int.Parse(args[1]);
+    int myIdx = args.Length > 2 ? int.Parse(args[2]) : 0;
+    int secs = args.Length > 3 ? int.Parse(args[3]) : 60;
+    using var engine = new TmlEngine();
+    engine.Attach(serverPid);
+    var m = engine.Mem!;
+    var p = engine.Proc!;
+    int PrologueLen(byte[] code, int min) { var d = Iced.Intel.Decoder.Create(64, code, Iced.Intel.DecoderOptions.None); int i = 0; while (i < min) { var ins = d.Decode(); if (ins.IsInvalid) return 0; i += ins.Length; } return i; }
+
+    // shared flag byte
+    ulong rl0 = ClrDiscovery.ResolveMethodCode(p.Id, "Terraria.Player", "RollLuck");
+    IntPtr flag = m.AllocNear((IntPtr)rl0, 8, TerrariaTrainer.Memory.Native.MemoryProtection.ExecuteReadWrite);
+    long flagA = flag.ToInt64();
+    Console.WriteLine($"flag @0x{flagA:X}");
+
+    ulong rlHook = 0, tdHook = 0; IntPtr rlCave = IntPtr.Zero, tdCave = IntPtr.Zero;
+
+    void InstallRoll(ulong addr)
+    {
+        IntPtr e = (IntPtr)addr; var head = m.ReadBytes(e, 24); int disp = PrologueLen(head, 5); if (disp < 5) return;
+        IntPtr cave = m.AllocNear(e, 0x80, TerrariaTrainer.Memory.Native.MemoryProtection.ExecuteReadWrite); if (cave == IntPtr.Zero) return;
+        var b = new List<byte>(); void E(params byte[] x) => b.AddRange(x); void U32(int v) => b.AddRange(BitConverter.GetBytes(v)); void U64(long v) => b.AddRange(BitConverter.GetBytes(v));
+        E(0x81, 0x79, 0x10); U32(myIdx);                 // cmp [rcx+0x10], myIdx
+        E(0x0F, 0x85); int j1 = b.Count; U32(0);          // jne ORIG
+        E(0x49, 0xBB); U64(flagA);                        // mov r11, flag
+        E(0x41, 0x80, 0x3B, 0x00);                        // cmp byte [r11], 0
+        E(0x0F, 0x84); int j2 = b.Count; U32(0);          // je ORIG
+        E(0x31, 0xC0, 0xC3);                              // xor eax,eax; ret
+        int orig = b.Count;
+        b.AddRange(head.Take(disp));
+        E(0xE9); U32((int)((e.ToInt64() + disp) - (cave.ToInt64() + b.Count + 4)));
+        var code = b.ToArray();
+        BitConverter.GetBytes(orig - (j1 + 4)).CopyTo(code, j1);
+        BitConverter.GetBytes(orig - (j2 + 4)).CopyTo(code, j2);
+        m.WriteBytes(cave, code);
+        var patch = new byte[disp]; patch[0] = 0xE9; BitConverter.GetBytes((int)(cave.ToInt64() - (e.ToInt64() + 5))).CopyTo(patch, 1); for (int k = 5; k < disp; k++) patch[k] = 0x90;
+        m.WriteBytes(e, patch); rlCave = cave; rlHook = addr;
+        Console.WriteLine($"  RollLuck cave @0x{addr:X} (disp={disp})");
+    }
+    void InstallTd(ulong addr)
+    {
+        IntPtr e = (IntPtr)addr; var head = m.ReadBytes(e, 24); int disp = PrologueLen(head, 5); if (disp < 5) return;
+        IntPtr cave = m.AllocNear(e, 0x80, TerrariaTrainer.Memory.Native.MemoryProtection.ExecuteReadWrite); if (cave == IntPtr.Zero) return;
+        var b = new List<byte>(); void E(params byte[] x) => b.AddRange(x); void U32(int v) => b.AddRange(BitConverter.GetBytes(v)); void U64(long v) => b.AddRange(BitConverter.GetBytes(v));
+        E(0x50, 0x41, 0x53);                              // push rax; push r11
+        E(0x48, 0x8B, 0x02);                              // mov rax,[rdx]  (info.npc)
+        E(0x48, 0x85, 0xC0);                              // test rax,rax
+        E(0x0F, 0x84); int jc1 = b.Count; U32(0);          // jz CLR
+        E(0x48, 0x8B, 0x40, 0x50);                        // mov rax,[rax+0x50] (playerInteraction[])
+        E(0x48, 0x85, 0xC0);                              // test rax,rax
+        E(0x0F, 0x84); int jc2 = b.Count; U32(0);          // jz CLR
+        E(0x0F, 0xB6, 0x80); U32(0x10 + myIdx);            // movzx eax, byte [rax+0x10+myIdx]
+        E(0x49, 0xBB); U64(flagA); E(0x41, 0x88, 0x03);   // mov r11,flag; mov [r11],al
+        E(0xE9); int jdone = b.Count; U32(0);              // jmp DONE
+        int clr = b.Count;
+        E(0x49, 0xBB); U64(flagA); E(0x41, 0xC6, 0x03, 0x00); // mov r11,flag; mov byte [r11],0
+        int done = b.Count;
+        E(0x41, 0x5B, 0x58);                              // pop r11; pop rax
+        b.AddRange(head.Take(disp));
+        E(0xE9); U32((int)((e.ToInt64() + disp) - (cave.ToInt64() + b.Count + 4)));
+        var code = b.ToArray();
+        BitConverter.GetBytes(clr - (jc1 + 4)).CopyTo(code, jc1);
+        BitConverter.GetBytes(clr - (jc2 + 4)).CopyTo(code, jc2);
+        BitConverter.GetBytes(done - (jdone + 4)).CopyTo(code, jdone);
+        m.WriteBytes(cave, code);
+        var patch = new byte[disp]; patch[0] = 0xE9; BitConverter.GetBytes((int)(cave.ToInt64() - (e.ToInt64() + 5))).CopyTo(patch, 1); for (int k = 5; k < disp; k++) patch[k] = 0x90;
+        m.WriteBytes(e, patch); tdCave = cave; tdHook = addr;
+        Console.WriteLine($"  TryDropping cave @0x{addr:X} (disp={disp})");
+    }
+
+    Console.WriteLine($"Scoped (damaged-only) 100% drop for whoAmI={myIdx}, {secs}s. KILL some, let some die in lava untouched.");
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    while (sw.Elapsed.TotalSeconds < secs)
+    {
+        ulong rl = ClrDiscovery.ResolveMethodCode(p.Id, "Terraria.Player", "RollLuck");
+        ulong td = ClrDiscovery.ResolveMethodCode(p.Id, "Terraria.GameContent.ItemDropRules.ItemDropResolver", "TryDropping");
+        if (rl != 0 && (rl != rlHook || m.ReadByte((IntPtr)rl) != 0xE9)) InstallRoll(rl);
+        if (td != 0 && (td != tdHook || m.ReadByte((IntPtr)td) != 0xE9)) InstallTd(td);
+        System.Threading.Thread.Sleep(1500);
+    }
+    Console.WriteLine("done.");
+    return 0;
+}
+
 if (mode == "scopeluck")
 {
     int serverPid = int.Parse(args[1]);
@@ -137,6 +224,75 @@ if (mode == "scopeluck")
         System.Threading.Thread.Sleep(1500);
     }
     Console.WriteLine("done.");
+    return 0;
+}
+
+if (mode == "readcave")
+{
+    // follow RollLuck's E9 jmp to the cave and dump the conditional (cmp [rcx+0x10], myIndex).
+    int pid = int.Parse(args[1]);
+    using var engine = new TmlEngine();
+    engine.Attach(pid);
+    ulong addr = ClrDiscovery.ResolveMethodCode(pid, "Terraria.Player", "RollLuck");
+    var m = engine.Mem!;
+    var head = m.ReadBytes((IntPtr)addr, 5);
+    if (head[0] != 0xE9) { Console.WriteLine($"RollLuck @0x{addr:X} not a jmp ({Convert.ToHexString(head)})"); return 0; }
+    int rel = BitConverter.ToInt32(head, 1);
+    ulong cave = (ulong)((long)addr + 5 + rel);
+    var cb = m.ReadBytes((IntPtr)cave, 20);
+    Console.WriteLine($"cave @0x{cave:X}: {Convert.ToHexString(cb)}");
+    if (cb[0] == 0x81 && cb[1] == 0x79 && cb[2] == 0x10)
+    {
+        int myIdx = BitConverter.ToInt32(cb, 3);
+        Console.WriteLine($"  => cmp [rcx+0x10(whoAmI)], {myIdx}  ==> SCOPED to whoAmI {myIdx} only (correct: only that player's rolls forced)");
+    }
+    else if (cb[0] == 0x31 && cb[1] == 0xC0 && cb[2] == 0xC3)
+        Console.WriteLine("  => xor eax;ret  ==> SERVER-WIDE (NOT scoped!) — leftover");
+    else Console.WriteLine("  => unrecognized cave head");
+    return 0;
+}
+
+if (mode == "livebytes")
+{
+    int pid = int.Parse(args[1]);
+    string type = args.Length > 2 ? args[2] : "Terraria.Player";
+    string meth = args.Length > 3 ? args[3] : "RollLuck";
+    using var engine = new TmlEngine();
+    engine.Attach(pid);
+    ulong addr = ClrDiscovery.ResolveMethodCode(pid, type, meth);
+    if (addr == 0) { Console.WriteLine($"{type}.{meth} not jitted on {pid}"); return 0; }
+    var b = engine.Mem!.ReadBytes((IntPtr)addr, 8);
+    string hex = Convert.ToHexString(b);
+    string verdict = hex.StartsWith("31C0C3") ? "  <-- SERVER-WIDE patched (xor eax;ret) = leftover diag patch, forces ALL drops"
+        : b[0] == 0xE9 ? "  <-- E9 jmp = a cave (scoped or leftover scopeluck)"
+        : "  <-- looks ORIGINAL (not patched)";
+    Console.WriteLine($"[PID {pid}] {meth} @0x{addr:X} live bytes: {hex}{verdict}");
+    return 0;
+}
+
+if (mode == "trackaddr")
+{
+    // Re-resolve a method's native code address periodically (no patching) to see if the
+    // .NET JIT relocates it. With TieredCompilation=0 it should never change.
+    var pp = TmlDiscovery.FindProcess();
+    if (pp == null) { Console.WriteLine("tModLoader not running."); return 0; }
+    string type = args.Length > 1 ? args[1] : "Terraria.Player";
+    string meth = args.Length > 2 ? args[2] : "RollLuck";
+    int secs = args.Length > 3 ? int.Parse(args[3]) : 180;
+    Console.WriteLine($"PID {pp.Id}: tracking {type}.{meth} for {secs}s (resolve every 3s). PLAY/FIGHT to warm methods.");
+    ulong last = 0; int changes = 0;
+    var seen = new List<ulong>();
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    int k = 0;
+    while (sw.Elapsed.TotalSeconds < secs)
+    {
+        ulong a = ClrDiscovery.ResolveMethodCode(pp.Id, type, meth);
+        if (a != last) { changes++; if (!seen.Contains(a)) seen.Add(a); Console.WriteLine($"  t={sw.Elapsed.TotalSeconds:0}s addr=0x{a:X} {(last==0?"(first)":"<-- CHANGED")}"); last = a; }
+        else if (k % 10 == 0) Console.WriteLine($"  t={sw.Elapsed.TotalSeconds:0}s addr=0x{a:X} (stable)");
+        k++;
+        System.Threading.Thread.Sleep(3000);
+    }
+    Console.WriteLine($"done. distinct addresses seen = {seen.Count}, changes = {changes - 1}. {(seen.Count<=1?"STABLE — one-shot patch would stick":"RELOCATED — needs re-assert")}");
     return 0;
 }
 
