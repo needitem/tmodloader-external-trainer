@@ -136,8 +136,6 @@ public sealed class TmlForm : Form
                 case RowKind.Craft: _engine.SetCraftAnywhere(); break;
                 case RowKind.BuffClear: if (int.TryParse(r.InjectValue, out var bid)) _engine.ClearBuff(bid); break;
                 case RowKind.InfAmmo: _engine.TopAmmo(); break;
-                case RowKind.ZoneForce:
-                    { var pr = r.InjectValue.Split(':'); if (pr.Length == 2 && int.TryParse(pr[0], out var zi) && int.TryParse(pr[1], out var mk)) _engine.ForceZoneBit(zi, (byte)mk); break; }
             }
         }
     }
@@ -462,7 +460,6 @@ public sealed class TmlForm : Form
         RowKind.ScopedDrop => "drop(me)",
         RowKind.BuffClear => "no-debuff",
         RowKind.InfAmmo => "ammo",
-        RowKind.ZoneForce => "biome",
         RowKind.Vanity => "vanity",
         RowKind.Action => "",
         RowKind.Value => r.Field!.Kind switch
@@ -584,10 +581,6 @@ public sealed class TmlForm : Form
             case RowKind.BuffClear:
                 // the high-frequency writer removes the buff each tick while active.
                 AppendLog($"{(r.Active ? "Enabled" : "Disabled")} {r.Desc}");
-                break;
-            case RowKind.ZoneForce:
-                // the high-frequency writer ORs the biome zone bit in each tick while active.
-                AppendLog($"{(r.Active ? "Forcing biome" : "Stopped forcing")}: {r.Desc}");
                 break;
             case RowKind.InfAmmo:
                 // the high-frequency writer restores any consumed ammo while active.

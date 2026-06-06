@@ -214,16 +214,6 @@ public sealed class TmlEngine : IDisposable
         return names.Count == 0 ? "Forest/Surface" : string.Join(", ", names);
     }
 
-    /// <summary>OR a biome zone bit on (called every high-freq tick to override the game's recompute).</summary>
-    public void ForceZoneBit(int zoneIndex, byte mask)
-    {
-        var m = Mem; var pb = PlayerBase();
-        if (m == null || pb == IntPtr.Zero || zoneIndex < 0 || zoneIndex > 4) return;
-        IntPtr a = (IntPtr)(pb.ToInt64() + ZoneOff() + zoneIndex);
-        byte cur = m.ReadByte(a);
-        if ((cur & mask) == 0) m.WriteByte(a, (byte)(cur | mask));
-    }
-
     // ---- buff helpers (int[] arrays) ----
 
     public (IntPtr id, IntPtr time, int len) BuffArrays()
