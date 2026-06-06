@@ -56,5 +56,19 @@
   { "group": "🎣 Fishing (method patch)", "desc": "Max Fishing Power (x20)", "kind": "patch", "method": "Player.Fishing_GetPowerMultiplier", "value": "f20" },
   { "group": "🎣 Fishing (method patch)", "desc": "Always Catch Crates (every fishing catch is a crate)", "kind": "crate" },
 
-  { "group": "⚔️ Combat (method patch)", "desc": "All Banner Effects (vs all enemies)", "kind": "patch", "method": "Player.HasNPCBannerBuff", "value": "1" }
+  { "group": "⚔️ Combat (method patch)", "desc": "All Banner Effects (vs all enemies)", "kind": "patch", "method": "Player.HasNPCBannerBuff", "value": "1" },
+
+  { "group": "🌍 Force Biome (current biome shows in vitals)", "desc": "Corruption", "kind": "zone", "value": "0:2" },
+  { "group": "🌍 Force Biome (current biome shows in vitals)", "desc": "Crimson", "kind": "zone", "value": "0:64" },
+  { "group": "🌍 Force Biome (current biome shows in vitals)", "desc": "Hallow", "kind": "zone", "value": "0:4" },
+  { "group": "🌍 Force Biome (current biome shows in vitals)", "desc": "Jungle", "kind": "zone", "value": "0:16" },
+  { "group": "🌍 Force Biome (current biome shows in vitals)", "desc": "Snow", "kind": "zone", "value": "0:32" },
+  { "group": "🌍 Force Biome (current biome shows in vitals)", "desc": "Meteor", "kind": "zone", "value": "0:8" },
+  { "group": "🌍 Force Biome (current biome shows in vitals)", "desc": "Dungeon", "kind": "zone", "value": "0:1" },
+  { "group": "🌍 Force Biome (current biome shows in vitals)", "desc": "Desert", "kind": "zone", "value": "1:32" },
+  { "group": "🌍 Force Biome (current biome shows in vitals)", "desc": "Glowing Mushroom", "kind": "zone", "value": "1:64" },
+  { "group": "🌍 Force Biome (current biome shows in vitals)", "desc": "Underground Desert", "kind": "zone", "value": "1:128" },
+  { "group": "🌍 Force Biome (current biome shows in vitals)", "desc": "Beach/Ocean", "kind": "zone", "value": "2:32" },
+  { "group": "🌍 Force Biome (current biome shows in vitals)", "desc": "Sandstorm", "kind": "zone", "value": "2:128" },
+  { "group": "🌍 Force Biome (current biome shows in vitals)", "desc": "Graveyard", "kind": "zone", "value": "3:64" }
 ]

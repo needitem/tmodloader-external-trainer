@@ -183,6 +183,47 @@ public sealed class TmlEngine : IDisposable
         return Encoding.Unicode.GetString(bytes);
     }
 
+    // ---- biome (zone) detection + forcing ----
+    // Biomes are bit-flags packed into Player.zone1..zone5 (BitsByte). The game recomputes them
+    // each frame from nearby tiles, so forcing = OR the bit in at high frequency.
+    private static readonly (int z, byte mask, string name)[] BiomeBits =
+    {
+        (0,0x01,"Dungeon"),(0,0x02,"Corruption"),(0,0x04,"Hallow"),(0,0x08,"Meteor"),
+        (0,0x10,"Jungle"),(0,0x20,"Snow"),(0,0x40,"Crimson"),
+        (1,0x20,"Desert"),(1,0x40,"Mushroom"),(1,0x80,"Underground Desert"),
+        (2,0x20,"Beach"),(2,0x40,"Rain"),(2,0x80,"Sandstorm"),
+        (3,0x40,"Graveyard"),
+    };
+
+    private int ZoneOff()
+    {
+        var f = Model?.PlayerFields.FirstOrDefault(x => x.Name == "zone1");
+        return f?.Offset ?? 0xA51;
+    }
+
+    /// <summary>Names of every biome zone currently active at the player.</summary>
+    public string CurrentBiomeText()
+    {
+        var m = Mem; var pb = PlayerBase();
+        if (m == null || pb == IntPtr.Zero) return "";
+        int z = ZoneOff();
+        var bytes = m.ReadBytes((IntPtr)(pb.ToInt64() + z), 5);
+        var names = new List<string>();
+        foreach (var (zi, mask, name) in BiomeBits)
+            if ((bytes[zi] & mask) != 0) names.Add(name);
+        return names.Count == 0 ? "Forest/Surface" : string.Join(", ", names);
+    }
+
+    /// <summary>OR a biome zone bit on (called every high-freq tick to override the game's recompute).</summary>
+    public void ForceZoneBit(int zoneIndex, byte mask)
+    {
+        var m = Mem; var pb = PlayerBase();
+        if (m == null || pb == IntPtr.Zero || zoneIndex < 0 || zoneIndex > 4) return;
+        IntPtr a = (IntPtr)(pb.ToInt64() + ZoneOff() + zoneIndex);
+        byte cur = m.ReadByte(a);
+        if ((cur & mask) == 0) m.WriteByte(a, (byte)(cur | mask));
+    }
+
     // ---- buff helpers (int[] arrays) ----
 
     public (IntPtr id, IntPtr time, int len) BuffArrays()
