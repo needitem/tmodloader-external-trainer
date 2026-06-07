@@ -316,22 +316,24 @@ public static class TmlDiscovery
         return result;
     }
 
-    /// <summary>Resolve a method's current native code address AND hot-region size (for caller-range checks).</summary>
-    public static (ulong addr, ulong size) ResolveMethodRange(int pid, string typeName, string method)
+    /// <summary>Resolve a method's hot AND cold native code regions (for caller-range checks). A huge
+    /// method like NPC.SpawnNPC can be split, and the NewNPC call may live in the cold fragment.</summary>
+    public static (ulong hotAddr, ulong hotSize, ulong coldAddr, ulong coldSize) ResolveMethodRegions(int pid, string typeName, string method)
     {
         using var dt = DataTarget.CreateSnapshotAndAttach(pid);
         var clr = dt.ClrVersions.FirstOrDefault();
-        if (clr == null) return (0, 0);
+        if (clr == null) return (0, 0, 0, 0);
         using var runtime = clr.CreateRuntime();
         var t = FindType(runtime, typeName);
-        if (t == null) return (0, 0);
+        if (t == null) return (0, 0, 0, 0);
         foreach (var m in t.Methods)
         {
             if (m.Name != method || m.NativeCode == 0) continue;
-            ulong size = 0; try { size = m.HotColdInfo.HotSize; } catch { }
-            return (m.NativeCode, size);
+            ulong ha = m.NativeCode, hs = 0, ca = 0, cs = 0;
+            try { var h = m.HotColdInfo; hs = h.HotSize; ca = h.ColdStart; cs = h.ColdSize; } catch { }
+            return (ha, hs, ca, cs);
         }
-        return (0, 0);
+        return (0, 0, 0, 0);
     }
 
     /// <summary>Resolve a type's MethodTable pointer (object[+0x00] holds it; used to identify a runtime type).</summary>

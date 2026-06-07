@@ -31,6 +31,7 @@ public sealed class TmlForm : Form
     private string _lastScopedStatus = "";
     private string _lastSpawnStatus = "";
     private string _lastRareStatus = "";
+    private int _rareLogTick;
     private TmlField? _fLife, _fLifeMax, _fMana, _fManaMax;
 
     // High-frequency writer: per-frame-recomputed values (move/mine speed) must be written
@@ -840,7 +841,7 @@ public sealed class TmlForm : Form
             if (_spawnBoost.Enabled && _spawnBoost.Status != _lastSpawnStatus)
             { _lastSpawnStatus = _spawnBoost.Status; AppendLog($"[spawn boost] {_lastSpawnStatus}"); }
 
-            if (_rareSpawn.Enabled && _rareSpawn.Status != _lastRareStatus)
+            if (_rareSpawn.Enabled && (++_rareLogTick % 8 == 0) && _rareSpawn.Status != _lastRareStatus)
             { _lastRareStatus = _rareSpawn.Status; AppendLog($"[rare spawn] {_lastRareStatus}"); }
 
             // Fast-tools is asserted by the high-frequency writer (the held item is recomputed

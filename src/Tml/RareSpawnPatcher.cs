@@ -27,8 +27,8 @@ public sealed class RareSpawnPatcher
     private int _targetPid = -1;
     private ProcessMemory? _mem;
     private bool _isServer;
-    private ulong _spawnLo, _spawnHi;        // SpawnNPC code range (natural-spawn caller)
-    private IntPtr _cfg;                      // 8 bytes: [0]=enabled, [4]=type
+    private ulong _hotLo, _hotHi, _coldLo, _coldHi;  // SpawnNPC hot+cold code ranges (natural-spawn caller)
+    private IntPtr _cfg;                      // 16 bytes: [0]=enabled, [4]=type, [8]=hit counter
     private string _status = "off";
 
     private sealed class Hook { public IntPtr Cave; public ulong At; public byte[]? Orig; public ulong OrigAddr; }
@@ -47,7 +47,7 @@ public sealed class RareSpawnPatcher
 
     private void ResetTarget()
     {
-        _targetPid = -1; _isServer = false; _spawnLo = _spawnHi = 0;
+        _targetPid = -1; _isServer = false; _hotLo = _hotHi = _coldLo = _coldHi = 0;
         try { _mem?.Dispose(); } catch { }
         _mem = null;
     }
@@ -75,32 +75,35 @@ public sealed class RareSpawnPatcher
         }
         if (_mem == null) { _status = "no mem"; return; }
 
-        // Resolve SpawnNPC's current code range (the natural-spawn caller) and NewNPC's entry.
+        // Resolve SpawnNPC's hot+cold code ranges (the natural-spawn caller) and NewNPC's entry.
         // Both may be reported as precode jmp stubs — resolve to the real code bodies.
-        var (spAddr, spSize) = TmlDiscovery.ResolveMethodRange(_targetPid, "Terraria.NPC", "SpawnNPC");
-        if (spAddr == 0 || spSize == 0) { _status = "SpawnNPC not jitted"; return; }
-        spAddr = RealCode(spAddr);
+        var (hot, hotSz, cold, coldSz) = TmlDiscovery.ResolveMethodRegions(_targetPid, "Terraria.NPC", "SpawnNPC");
+        if (hot == 0 || hotSz == 0) { _status = "SpawnNPC not jitted"; return; }
+        ulong hotLo = RealCode(hot), hotHi = hotLo + hotSz;
+        ulong coldLo = cold != 0 ? cold : 0, coldHi = cold != 0 ? cold + coldSz : 0;
         var cur = TmlDiscovery.ResolveCurrentAddresses(_targetPid, new[] { ("nn", "Terraria.NPC", "NewNPC") });
         if (!cur.TryGetValue("nn", out var list) || list.Count == 0) { _status = "NewNPC not jitted"; return; }
         ulong addr = RealCode(list[0]);
 
         if (_cfg == IntPtr.Zero)
         {
-            _cfg = _mem.AllocNear((IntPtr)addr, 8, Native.MemoryProtection.ExecuteReadWrite);
+            _cfg = _mem.AllocNear((IntPtr)addr, 16, Native.MemoryProtection.ExecuteReadWrite);
             if (_cfg == IntPtr.Zero) { _status = "cfg alloc failed"; return; }
+            _mem.WriteInt32((IntPtr)(_cfg.ToInt64() + 8), 0); // reset hit counter
         }
         _mem.WriteByte(_cfg, 1);
         _mem.WriteInt32((IntPtr)(_cfg.ToInt64() + 4), _type);
 
-        // (Re)install if the hook is gone OR SpawnNPC relocated (range baked into the cave).
-        if (!IsHooked(addr) || spAddr != _spawnLo || spAddr + spSize != _spawnHi)
+        // (Re)install if the hook is gone OR SpawnNPC relocated (ranges baked into the cave).
+        if (!IsHooked(addr) || hotLo != _hotLo || hotHi != _hotHi || coldLo != _coldLo || coldHi != _coldHi)
         {
-            _spawnLo = spAddr; _spawnHi = spAddr + spSize;
+            _hotLo = hotLo; _hotHi = hotHi; _coldLo = coldLo; _coldHi = coldHi;
             RestoreHookOnly();
             InstallCave(addr);
         }
 
-        _status = $"{(_isServer ? "server" : "client")} pid {_targetPid} — natural spawns → type {_type}";
+        int hits = 0; try { hits = _mem.ReadInt32((IntPtr)(_cfg.ToInt64() + 8)); } catch { }
+        _status = $"{(_isServer ? "server" : "client")} pid {_targetPid} — type {_type}, overrides={hits}, cold={(cold != 0 ? "yes" : "no")}";
     }
 
     /// <summary>Follow tiered-JIT precode jmp stubs (E9 rel32) to the real method body. ClrMD's NativeCode
@@ -116,7 +119,7 @@ public sealed class RareSpawnPatcher
             if (_nn.Cave != IntPtr.Zero)
             {
                 ulong cl = (ulong)_nn.Cave.ToInt64();
-                if (target >= cl && target < cl + 0x90) break; // don't follow our own hook
+                if (target >= cl && target < cl + 0xC0) break; // don't follow our own hook
             }
             addr = target;
         }
@@ -137,30 +140,44 @@ public sealed class RareSpawnPatcher
         var head = mem.ReadBytes(entry, 24);
         int disp = PrologueLen(head, 5);
         if (disp < 5) { _status = "prologue undecodable"; return; }
-        IntPtr cave = mem.AllocNear(entry, 0x90, Native.MemoryProtection.ExecuteReadWrite);
+        IntPtr cave = mem.AllocNear(entry, 0xC0, Native.MemoryProtection.ExecuteReadWrite);
         if (cave == IntPtr.Zero) { _status = "alloc failed"; return; }
 
         var b = new List<byte>(); void E(params byte[] x) => b.AddRange(x); void U32(int v) => b.AddRange(BitConverter.GetBytes(v));
+        var fixHot = new List<int>(); var fixCold = new List<int>(); var fixOrig = new List<int>();
         // r10, r11 are scratch and not argument registers at NewNPC entry — safe to clobber.
         E(0x4C, 0x8B, 0x1C, 0x24);                             // mov r11, [rsp]   (return address)
-        E(0x49, 0xBA); b.AddRange(BitConverter.GetBytes((long)_spawnLo)); // mov r10, SpawnNPC_lo
+        // in HOT range? -> DOIT
+        E(0x49, 0xBA); b.AddRange(BitConverter.GetBytes((long)_hotLo)); // mov r10, hotLo
         E(0x4D, 0x39, 0xD3);                                   // cmp r11, r10
-        E(0x0F, 0x82); int j1 = b.Count; U32(0);               // jb ORIG (below range)
-        E(0x49, 0xBA); b.AddRange(BitConverter.GetBytes((long)_spawnHi)); // mov r10, SpawnNPC_hi
+        E(0x0F, 0x82); fixCold.Add(b.Count); U32(0);           // jb chkCold
+        E(0x49, 0xBA); b.AddRange(BitConverter.GetBytes((long)_hotHi)); // mov r10, hotHi
         E(0x4D, 0x39, 0xD3);                                   // cmp r11, r10
-        E(0x0F, 0x83); int j2 = b.Count; U32(0);               // jae ORIG (at/above range)
+        int jDoit = -1;
+        E(0x0F, 0x82); jDoit = b.Count; U32(0);                // jb DOIT (in hot)
+        int chkCold = b.Count;                                 // chkCold:
+        // in COLD range? -> DOIT, else ORIG
+        E(0x49, 0xBA); b.AddRange(BitConverter.GetBytes((long)_coldLo)); // mov r10, coldLo
+        E(0x4D, 0x39, 0xD3);                                   // cmp r11, r10
+        E(0x0F, 0x82); fixOrig.Add(b.Count); U32(0);           // jb ORIG
+        E(0x49, 0xBA); b.AddRange(BitConverter.GetBytes((long)_coldHi)); // mov r10, coldHi
+        E(0x4D, 0x39, 0xD3);                                   // cmp r11, r10
+        E(0x0F, 0x83); fixOrig.Add(b.Count); U32(0);           // jae ORIG
+        int doit = b.Count;                                    // DOIT:
         E(0x49, 0xBB); b.AddRange(BitConverter.GetBytes(_cfg.ToInt64()));    // mov r11, &cfg
         E(0x41, 0x80, 0x3B, 0x00);                             // cmp byte [r11], 0
-        E(0x0F, 0x84); int j3 = b.Count; U32(0);               // je ORIG (disabled)
+        E(0x0F, 0x84); fixOrig.Add(b.Count); U32(0);           // je ORIG (disabled)
         E(0x45, 0x8B, 0x4B, 0x04);                             // mov r9d, [r11+4]  (override Type)
-        int orig = b.Count;
+        E(0x41, 0xFF, 0x43, 0x08);                             // inc dword [r11+8] (hit counter)
+        int orig = b.Count;                                    // ORIG:
 
         b.AddRange(head.Take(disp));                           // displaced prologue
         b.Add(0xE9); b.AddRange(BitConverter.GetBytes((int)((entry.ToInt64() + disp) - (cave.ToInt64() + b.Count + 4))));
         var code = b.ToArray();
-        BitConverter.GetBytes(orig - (j1 + 4)).CopyTo(code, j1);
-        BitConverter.GetBytes(orig - (j2 + 4)).CopyTo(code, j2);
-        BitConverter.GetBytes(orig - (j3 + 4)).CopyTo(code, j3);
+        // patch internal rel32s
+        BitConverter.GetBytes(chkCold - (fixCold[0] + 4)).CopyTo(code, fixCold[0]);
+        BitConverter.GetBytes(doit - (jDoit + 4)).CopyTo(code, jDoit);
+        foreach (var p in fixOrig) BitConverter.GetBytes(orig - (p + 4)).CopyTo(code, p);
         mem.WriteBytes(cave, code);
 
         var patch = new byte[disp];
