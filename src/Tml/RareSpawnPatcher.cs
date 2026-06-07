@@ -108,7 +108,7 @@ public sealed class RareSpawnPatcher
 
         // A 0/0 scope makes the cave capture-only (never matches), which is exactly what we want
         // until the spawner is discovered; once locked, re-install bakes in the real range.
-        if (reinstall) { RestoreHookOnly(); InstallCave(addr); }
+        if (reinstall) { RestoreHookOnly(); if (!InstallCave(addr)) return; } // keep the failure reason in _status
 
         int over = 0, total = 0;
         try { over = _mem.ReadInt32((IntPtr)(_cfg.ToInt64() + 8)); total = _mem.ReadInt32((IntPtr)(_cfg.ToInt64() + 12)); } catch { }
@@ -142,16 +142,16 @@ public sealed class RareSpawnPatcher
         try { return _mem!.ReadByte((IntPtr)addr) == 0xE9; } catch { return false; }
     }
 
-    // cave: if source is a natural spawn AND enabled, override r9d (Type) with cfg type
-    private void InstallCave(ulong addr)
+    // cave at NewNPC entry: override r9d (Type) when the caller is inside the spawner range.
+    private bool InstallCave(ulong addr)
     {
         var mem = _mem!;
         IntPtr entry = (IntPtr)addr;
         var head = mem.ReadBytes(entry, 24);
         int disp = PrologueLen(head, 5);
-        if (disp < 5) { _status = "prologue undecodable"; return; }
+        if (disp < 5) { _status = $"prologue unsafe @0x{addr:X}: {BitConverter.ToString(head, 0, 8)}"; return false; }
         IntPtr cave = mem.AllocNear(entry, 0xC0, Native.MemoryProtection.ExecuteReadWrite);
-        if (cave == IntPtr.Zero) { _status = "alloc failed"; return; }
+        if (cave == IntPtr.Zero) { _status = "cave alloc failed"; return false; }
 
         var b = new List<byte>(); void E(params byte[] x) => b.AddRange(x); void U32(int v) => b.AddRange(BitConverter.GetBytes(v));
         var fixOrig = new List<int>();
@@ -189,6 +189,7 @@ public sealed class RareSpawnPatcher
         _nn.Orig = head.Take(disp).ToArray(); _nn.OrigAddr = addr;
         mem.WriteBytes(entry, patch);
         _nn.Cave = cave; _nn.At = addr;
+        return true;
     }
 
     private void RestoreHookOnly()
