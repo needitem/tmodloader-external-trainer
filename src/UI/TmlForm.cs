@@ -426,7 +426,7 @@ public sealed class TmlForm : Form
             : r.Desc.Contains(find, StringComparison.OrdinalIgnoreCase));
     }
 
-    private sealed class RareItem { public int Type; public string Display = ""; public override string ToString() => Display; }
+    private sealed class RareItem { public int Type { get; set; } public string Display { get; set; } = ""; public override string ToString() => Display; }
     private bool _building;
 
     private void RebuildGrid()
@@ -455,24 +455,30 @@ public sealed class TmlForm : Form
                 row.Cells["active"].Value = r.Active;
                 row.Cells["desc"].Value = r.Desc;
                 row.Cells["type"].Value = TypeLabel(r);
+                bool comboOk = false;
                 if (_rareNpcs.Count > 0)
                 {
-                    var items = _rareNpcs.Select(x => new RareItem { Type = x.type, Display = $"★{x.stars} {x.name} ({x.type})" }).ToList();
-                    items.Insert(0, new RareItem { Type = 0, Display = "— pick a rare mob —" });
-                    var combo = new DataGridViewComboBoxCell
+                    try
                     {
-                        FlatStyle = FlatStyle.Flat,
-                        DisplayStyle = DataGridViewComboBoxDisplayStyle.DropDownButton,
-                        DataSource = items,
-                        DisplayMember = nameof(RareItem.Display),
-                        ValueMember = nameof(RareItem.Type),
-                    };
-                    row.Cells["value"] = combo;
-                    int sel = int.TryParse(r.InjectValue, out var t) ? t : 0;
-                    combo.Value = items.Any(it => it.Type == sel) ? sel : 0;
-                    row.Cells["value"].ReadOnly = false;
+                        var items = _rareNpcs.Select(x => new RareItem { Type = x.type, Display = $"★{x.stars} {x.name} ({x.type})" }).ToList();
+                        items.Insert(0, new RareItem { Type = 0, Display = "— pick a rare mob —" });
+                        var combo = new DataGridViewComboBoxCell
+                        {
+                            FlatStyle = FlatStyle.Flat,
+                            DisplayStyle = DataGridViewComboBoxDisplayStyle.DropDownButton,
+                            ValueMember = nameof(RareItem.Type),
+                            DisplayMember = nameof(RareItem.Display),
+                            DataSource = items,
+                        };
+                        row.Cells["value"] = combo;
+                        int sel = int.TryParse(r.InjectValue, out var t) ? t : 0;
+                        combo.Value = items.Any(it => it.Type == sel) ? sel : 0;
+                        row.Cells["value"].ReadOnly = false;
+                        comboOk = true;
+                    }
+                    catch { comboOk = false; }
                 }
-                else { row.Cells["value"].Value = "(attach to load list)"; row.Cells["value"].ReadOnly = true; }
+                if (!comboOk) { row.Cells["value"].Value = "(attach to load list)"; row.Cells["value"].ReadOnly = true; }
             }
             else
             {
