@@ -429,7 +429,6 @@ public sealed class TmlForm : Form
             : r.Desc.Contains(find, StringComparison.OrdinalIgnoreCase));
     }
 
-    private const string RarePlaceholder = "— pick a rare mob —";
     private static string RareDisplay(int type, int stars, string name) => $"★{stars} {name} ({type})";
     private static int ParseRareType(string? display)
     {
@@ -466,27 +465,10 @@ public sealed class TmlForm : Form
                 row.Cells["active"].Value = r.Active;
                 row.Cells["desc"].Value = r.Desc;
                 row.Cells["type"].Value = TypeLabel(r);
-                bool comboOk = false;
-                if (_rareNpcs.Count > 0)
-                {
-                    try
-                    {
-                        // Plain string items (no DataSource binding — that throws when the cell isn't
-                        // yet attached). The NPC type is encoded in the trailing "(N)" and parsed back.
-                        var combo = new DataGridViewComboBoxCell { FlatStyle = FlatStyle.Flat, DisplayStyle = DataGridViewComboBoxDisplayStyle.DropDownButton };
-                        combo.Items.Add(RarePlaceholder);
-                        foreach (var x in _rareNpcs) combo.Items.Add(RareDisplay(x.type, x.stars, x.name));
-                        row.Cells["value"] = combo;
-                        int sel = int.TryParse(r.InjectValue, out var t) ? t : 0;
-                        string disp = RarePlaceholder;
-                        if (sel > 0) foreach (var x in _rareNpcs) if (x.type == sel) { disp = RareDisplay(x.type, x.stars, x.name); break; }
-                        combo.Value = disp;
-                        row.Cells["value"].ReadOnly = false;
-                        comboOk = true;
-                    }
-                    catch { comboOk = false; }
-                }
-                if (!comboOk) { row.Cells["value"].Value = "(attach to load list)"; row.Cells["value"].ReadOnly = true; }
+                int sel = int.TryParse(r.InjectValue, out var t) ? t : 0;
+                row.Cells["value"].Value = sel > 0 ? RareName(sel) : "▾ click to pick";
+                row.Cells["value"].Style.ForeColor = Color.FromArgb(40, 90, 200);
+                row.Cells["value"].ReadOnly = true;
             }
             else
             {
@@ -541,6 +523,7 @@ public sealed class TmlForm : Form
         if (e.RowIndex < 0) return;
         var grow = _grid.Rows[e.RowIndex];
         if (grow.Tag is not CheatRow r || r.Kind == RowKind.GroupHeader) return;
+        if (r.Kind == RowKind.RareSpawn && _grid.Columns[e.ColumnIndex].Name == "value") { OpenRarePicker(r, grow); return; }
         if (_grid.Columns[e.ColumnIndex].Name != "active") return;
         if (!_engine.Attached) { AppendLog("Attach first."); if (grow != null) grow.Cells["active"].Value = false; return; }
 
@@ -888,6 +871,49 @@ public sealed class TmlForm : Form
     {
         foreach (var x in _rareNpcs) if (x.type == type) return $"{x.name} ({type})";
         return $"type {type}";
+    }
+
+    /// <summary>Searchable modal picker for the 600+ rare mobs (a grid combo-cell proved unreliable).</summary>
+    private void OpenRarePicker(CheatRow r, DataGridViewRow grow)
+    {
+        if (_rareNpcs.Count == 0) { AppendLog("Attach to a world first to load the rare-mob list."); return; }
+        using var dlg = new Form
+        {
+            Text = "Pick a rare mob (sorted by rarity ★)", Width = 440, Height = 540,
+            StartPosition = FormStartPosition.CenterParent, FormBorderStyle = FormBorderStyle.FixedDialog,
+            MaximizeBox = false, MinimizeBox = false, Font = Font,
+        };
+        var search = new TextBox { Dock = DockStyle.Top, PlaceholderText = "type to filter by name or id…" };
+        var list = new ListBox { Dock = DockStyle.Fill, IntegralHeight = false };
+        var ok = new Button { Text = "Select", Dock = DockStyle.Bottom, Height = 34 };
+        void Fill(string f)
+        {
+            list.BeginUpdate(); list.Items.Clear();
+            foreach (var x in _rareNpcs)
+                if (f.Length == 0 || x.name.Contains(f, StringComparison.OrdinalIgnoreCase) || x.type.ToString() == f)
+                    list.Items.Add(RareDisplay(x.type, x.stars, x.name));
+            list.EndUpdate();
+        }
+        Fill("");
+        int cur = int.TryParse(r.InjectValue, out var ct) ? ct : 0;
+        if (cur > 0) for (int i = 0; i < list.Items.Count; i++) if (ParseRareType(list.Items[i].ToString()) == cur) { list.SelectedIndex = i; break; }
+        search.TextChanged += (_, _) => Fill(search.Text.Trim());
+        list.DoubleClick += (_, _) => { if (list.SelectedItem != null) ok.PerformClick(); };
+        ok.Click += (_, _) => { dlg.DialogResult = DialogResult.OK; dlg.Close(); };
+        dlg.Controls.Add(list); dlg.Controls.Add(search); dlg.Controls.Add(ok);
+        dlg.AcceptButton = ok;
+        if (dlg.ShowDialog(this) == DialogResult.OK && list.SelectedItem is { } sel)
+        {
+            int type = ParseRareType(sel.ToString());
+            if (type > 0)
+            {
+                r.InjectValue = type.ToString();
+                grow.Cells["value"].Value = RareName(type);
+                _rareSpawn.SetType(type);
+                AppendLog($"Rare spawn target: {RareName(type)}" + (r.Active ? " (live)" : " — tick On to start"));
+                SaveConfig();
+            }
+        }
     }
 
     private string VitalsText()
