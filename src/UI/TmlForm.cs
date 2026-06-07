@@ -644,9 +644,10 @@ public sealed class TmlForm : Form
             case RowKind.SpawnBoost:
                 if (r.Active)
                 {
-                    _spawnBoost.SetValues(int.TryParse(r.InjectValue, out var sr) ? sr : 30, 40);
+                    // editable value = maxSpawns (the felt cap); spawnRate fixed aggressive so it refills fast.
+                    _spawnBoost.SetValues(8, int.TryParse(r.InjectValue, out var sr) ? sr : 60);
                     _spawnBoost.Enable();
-                    AppendLog($"ON: {r.Desc} (spawnRate {r.InjectValue}, lower = more spawns; works on MP server)");
+                    AppendLog($"ON: {r.Desc} (max {r.InjectValue} enemies near you; works on MP server)");
                 }
                 else { _spawnBoost.Disable(); AppendLog($"OFF: {r.Desc}"); }
                 break;
@@ -779,7 +780,7 @@ public sealed class TmlForm : Form
         {
             if (!int.TryParse(text.Trim(), out var sv) || sv < 1) { sv = 1; grow.Cells["value"].Value = "1"; }
             r.InjectValue = sv.ToString();
-            if (r.Active) { _spawnBoost.SetValues(sv, 40); AppendLog($"Spawn rate set to {sv} (lower = more spawns)"); }
+            if (r.Active) { _spawnBoost.SetValues(8, sv); AppendLog($"Max enemies near you set to {sv}"); }
             SaveConfig();
             return;
         }
