@@ -48,6 +48,7 @@ public sealed class TmlForm : Form
     // Force every natural spawn to a chosen rare mob — also targets the MP server.
     private readonly RareSpawnPatcher _rareSpawn;
     private List<(int type, int stars, string name)> _rareNpcs = new();
+    private int _rareSelType; // last-picked rare mob type (fallback for the toggle)
 
     [DllImport("winmm.dll")] private static extern uint timeBeginPeriod(uint ms);
     [DllImport("winmm.dll")] private static extern uint timeEndPeriod(uint ms);
@@ -466,6 +467,7 @@ public sealed class TmlForm : Form
                 row.Cells["desc"].Value = r.Desc;
                 row.Cells["type"].Value = TypeLabel(r);
                 int sel = int.TryParse(r.InjectValue, out var t) ? t : 0;
+                if (sel <= 0 && _rareSelType > 0) { sel = _rareSelType; r.InjectValue = sel.ToString(); } // survive re-attach
                 row.Cells["value"].Value = sel > 0 ? RareName(sel) : "▾ click to pick";
                 row.Cells["value"].Style.ForeColor = Color.FromArgb(40, 90, 200);
                 row.Cells["value"].ReadOnly = true;
@@ -637,7 +639,10 @@ public sealed class TmlForm : Form
                 if (r.Active)
                 {
                     int rt = int.TryParse(r.InjectValue, out var rv) ? rv : 0;
-                    if (rt <= 0) { r.Active = false; AppendLog("Pick a rare mob from the dropdown first, then enable."); break; }
+                    if (rt <= 0) rt = _rareSelType; // fallback to the last picked mob
+                    if (rt <= 0) { r.Active = false; AppendLog("Pick a rare mob first (click the Value cell), then enable."); break; }
+                    r.InjectValue = rt.ToString();
+                    _rareSelType = rt;
                     _rareSpawn.SetType(rt);
                     _rareSpawn.Enable();
                     AppendLog($"ON: {r.Desc} → {RareName(rt)} (every natural spawn becomes this; works on MP server)");
@@ -725,8 +730,10 @@ public sealed class TmlForm : Form
         if (grow.Tag is not CheatRow r || r.Kind != RowKind.RareSpawn) return;
         if (_grid.Columns[e.ColumnIndex].Name != "value") return;
         int type = ParseRareType(Convert.ToString(grow.Cells["value"].Value));
+        if (type <= 0) return; // ignore the placeholder/transient values
+        _rareSelType = type;
         r.InjectValue = type.ToString();
-        if (type > 0) { _rareSpawn.SetType(type); AppendLog($"Rare spawn target: {RareName(type)}"); }
+        if (r.Active) _rareSpawn.SetType(type);
         SaveConfig();
     }
 
@@ -907,6 +914,7 @@ public sealed class TmlForm : Form
             int type = ParseRareType(sel.ToString());
             if (type > 0)
             {
+                _rareSelType = type;
                 r.InjectValue = type.ToString();
                 grow.Cells["value"].Value = RareName(type);
                 _rareSpawn.SetType(type);
