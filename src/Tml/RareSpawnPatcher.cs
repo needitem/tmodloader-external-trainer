@@ -76,11 +76,13 @@ public sealed class RareSpawnPatcher
         if (_mem == null) { _status = "no mem"; return; }
 
         // Resolve SpawnNPC's current code range (the natural-spawn caller) and NewNPC's entry.
+        // Both may be reported as precode jmp stubs — resolve to the real code bodies.
         var (spAddr, spSize) = TmlDiscovery.ResolveMethodRange(_targetPid, "Terraria.NPC", "SpawnNPC");
         if (spAddr == 0 || spSize == 0) { _status = "SpawnNPC not jitted"; return; }
+        spAddr = RealCode(spAddr);
         var cur = TmlDiscovery.ResolveCurrentAddresses(_targetPid, new[] { ("nn", "Terraria.NPC", "NewNPC") });
         if (!cur.TryGetValue("nn", out var list) || list.Count == 0) { _status = "NewNPC not jitted"; return; }
-        ulong addr = list[0];
+        ulong addr = RealCode(list[0]);
 
         if (_cfg == IntPtr.Zero)
         {
@@ -99,6 +101,26 @@ public sealed class RareSpawnPatcher
         }
 
         _status = $"{(_isServer ? "server" : "client")} pid {_targetPid} — natural spawns → type {_type}";
+    }
+
+    /// <summary>Follow tiered-JIT precode jmp stubs (E9 rel32) to the real method body. ClrMD's NativeCode
+    /// can point at a `jmp realcode` stub; displacing that relative jmp into a cave would corrupt it and
+    /// crash the process. We hook the real body instead. Stops if a hop would enter our own cave.</summary>
+    private ulong RealCode(ulong addr)
+    {
+        for (int i = 0; i < 4; i++)
+        {
+            byte[] b; try { b = _mem!.ReadBytes((IntPtr)addr, 5); } catch { break; }
+            if (b.Length < 5 || b[0] != 0xE9) break;
+            ulong target = (ulong)((long)addr + 5 + BitConverter.ToInt32(b, 1));
+            if (_nn.Cave != IntPtr.Zero)
+            {
+                ulong cl = (ulong)_nn.Cave.ToInt64();
+                if (target >= cl && target < cl + 0x90) break; // don't follow our own hook
+            }
+            addr = target;
+        }
+        return addr;
     }
 
     private bool IsHooked(ulong addr)
@@ -170,7 +192,19 @@ public sealed class RareSpawnPatcher
     {
         var dec = Iced.Intel.Decoder.Create(64, code, Iced.Intel.DecoderOptions.None);
         int i = 0;
-        while (i < min) { var ins = dec.Decode(); if (ins.IsInvalid) return 0; i += ins.Length; }
+        while (i < min)
+        {
+            var ins = dec.Decode();
+            if (ins.IsInvalid) return 0;
+            // Relocating an IP-relative or branch instruction into a cave would corrupt it -> refuse.
+            if (ins.IsIPRelativeMemoryOperand) return 0;
+            switch (ins.FlowControl)
+            {
+                case Iced.Intel.FlowControl.Next: break;
+                default: return 0; // call/jmp/jcc/ret/etc. in the displaced bytes
+            }
+            i += ins.Length;
+        }
         return i;
     }
 }

@@ -498,6 +498,32 @@ internal static class ClrDiscovery
         Console.WriteLine($"{typeName}  MethodTable=0x{t.MethodTable:X}");
     }
 
+    public static void DisasmAt(int pid, ulong addr, int count)
+    {
+        using var dt = DataTarget.CreateSnapshotAndAttach(pid);
+        byte[] code = new byte[count + 16];
+        dt.DataReader.Read(addr, code);
+        var dec = Iced.Intel.Decoder.Create(64, code, Iced.Intel.DecoderOptions.None);
+        dec.IP = addr;
+        var fmt = new Iced.Intel.NasmFormatter();
+        var sb = new System.Text.StringBuilder();
+        ulong end = addr + (ulong)count;
+        while (dec.IP < end)
+        {
+            var ins = dec.Decode();
+            sb.Clear(); fmt.Format(ins, new StringOutputWrap(sb));
+            Console.WriteLine($"  0x{ins.IP:X}  {sb}");
+            if (ins.IsInvalid) break;
+        }
+    }
+
+    private sealed class StringOutputWrap : Iced.Intel.FormatterOutput
+    {
+        private readonly System.Text.StringBuilder _sb;
+        public StringOutputWrap(System.Text.StringBuilder sb) => _sb = sb;
+        public override void Write(string text, Iced.Intel.FormatterTextKind kind) => _sb.Append(text);
+    }
+
     public static void ListMethods(int pid, string sub, string typeName = "Terraria.Player")
     {
         using var dt = DataTarget.CreateSnapshotAndAttach(pid);

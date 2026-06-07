@@ -1323,6 +1323,14 @@ if (mode == "rares")
     return 0;
 }
 
+if (mode == "disasmaddr")
+{
+    ulong a = Convert.ToUInt64(args[1].Replace("0x", ""), 16);
+    int n = args.Length > 2 ? Convert.ToInt32(args[2], 16) : 0x20;
+    ClrDiscovery.DisasmAt(proc.Id, a, n);
+    return 0;
+}
+
 if (mode == "dump")
 {
     ClrDiscovery.DumpMethod(proc.Id, args.Length > 1 ? args[1] : "ItemCheck_UseMiningTools_ActuallyUseMiningTool",
