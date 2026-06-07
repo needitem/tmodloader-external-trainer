@@ -27,8 +27,8 @@ public sealed class RareSpawnPatcher
     private int _targetPid = -1;
     private ProcessMemory? _mem;
     private bool _isServer;
-    private ulong _hotLo, _hotHi, _coldLo, _coldHi;  // SpawnNPC hot+cold code ranges (natural-spawn caller)
-    private IntPtr _cfg;                      // 32 bytes: [0]=enabled,[4]=type,[8]=overrides,[12]=totalCalls,[16]=lastRet(8)
+    private ulong _spawnSrcMT;                // MethodTable of EntitySource_SpawnNPC (natural-spawn source)
+    private IntPtr _cfg;                      // 32 bytes: [0]=enabled,[4]=type,[8]=overrides,[12]=total,[16]=lastRet(8),[24]=srcMT(8)
     private string _status = "off";
 
     private sealed class Hook { public IntPtr Cave; public ulong At; public byte[]? Orig; public ulong OrigAddr; }
@@ -47,7 +47,7 @@ public sealed class RareSpawnPatcher
 
     private void ResetTarget()
     {
-        _targetPid = -1; _isServer = false; _hotLo = _hotHi = _coldLo = _coldHi = 0;
+        _targetPid = -1; _isServer = false; _spawnSrcMT = 0;
         try { _mem?.Dispose(); } catch { }
         _mem = null;
     }
@@ -72,15 +72,11 @@ public sealed class RareSpawnPatcher
             _targetPid = wantPid;
             _isServer = server != null;
             _mem = ProcessMemory.Attach(Process.GetProcessById(wantPid));
+            // The natural-spawn source object type — scope the override to calls that pass it.
+            _spawnSrcMT = TmlDiscovery.ResolveTypeMethodTable(wantPid, "Terraria.DataStructures.EntitySource_SpawnNPC");
         }
         if (_mem == null) { _status = "no mem"; return; }
 
-        // Resolve SpawnNPC's hot+cold code ranges (the natural-spawn caller) and NewNPC's entry.
-        // Both may be reported as precode jmp stubs — resolve to the real code bodies.
-        var (hot, hotSz, cold, coldSz) = TmlDiscovery.ResolveMethodRegions(_targetPid, "Terraria.NPC", "SpawnNPC");
-        if (hot == 0 || hotSz == 0) { _status = "SpawnNPC not jitted"; return; }
-        ulong hotLo = RealCode(hot), hotHi = hotLo + hotSz;
-        ulong coldLo = cold != 0 ? cold : 0, coldHi = cold != 0 ? cold + coldSz : 0;
         var cur = TmlDiscovery.ResolveCurrentAddresses(_targetPid, new[] { ("nn", "Terraria.NPC", "NewNPC") });
         if (!cur.TryGetValue("nn", out var list) || list.Count == 0) { _status = "NewNPC not jitted"; return; }
         ulong addr = RealCode(list[0]);
@@ -89,25 +85,19 @@ public sealed class RareSpawnPatcher
         {
             _cfg = _mem.AllocNear((IntPtr)addr, 32, Native.MemoryProtection.ExecuteReadWrite);
             if (_cfg == IntPtr.Zero) { _status = "cfg alloc failed"; return; }
-            _mem.WriteBytes((IntPtr)(_cfg.ToInt64() + 8), new byte[16]); // reset counters + lastRet
+            _mem.WriteBytes((IntPtr)(_cfg.ToInt64() + 8), new byte[24]); // reset counters + lastRet + srcMT
         }
         _mem.WriteByte(_cfg, 1);
         _mem.WriteInt32((IntPtr)(_cfg.ToInt64() + 4), _type);
 
-        // (Re)install if the hook is gone OR SpawnNPC relocated (ranges baked into the cave).
-        if (!IsHooked(addr) || hotLo != _hotLo || hotHi != _hotHi || coldLo != _coldLo || coldHi != _coldHi)
-        {
-            _hotLo = hotLo; _hotHi = hotHi; _coldLo = coldLo; _coldHi = coldHi;
-            RestoreHookOnly();
-            InstallCave(addr);
-        }
+        if (!IsHooked(addr)) { RestoreHookOnly(); InstallCave(addr); }
 
-        int over = 0, total = 0; ulong lastRet = 0;
-        try { over = _mem.ReadInt32((IntPtr)(_cfg.ToInt64() + 8)); total = _mem.ReadInt32((IntPtr)(_cfg.ToInt64() + 12)); lastRet = (ulong)_mem.ReadInt64((IntPtr)(_cfg.ToInt64() + 16)); } catch { }
-        bool inHot = lastRet >= _hotLo && lastRet < _hotHi;
-        string caller = "";
-        try { if (lastRet != 0) caller = TmlDiscovery.MethodNameAt(_targetPid, lastRet); } catch { }
-        _status = $"{(_isServer ? "srv" : "cli")} {(IsHooked(addr) ? "HOOK" : "NOHOOK")} type{_type} calls={total} over={over} caller={caller} {(inHot ? "IN" : "OUT")}";
+        int over = 0, total = 0; ulong srcMT = 0;
+        try { over = _mem.ReadInt32((IntPtr)(_cfg.ToInt64() + 8)); total = _mem.ReadInt32((IntPtr)(_cfg.ToInt64() + 12)); srcMT = (ulong)_mem.ReadInt64((IntPtr)(_cfg.ToInt64() + 24)); } catch { }
+        string srcType = "";
+        try { if (srcMT != 0) srcType = TmlDiscovery.TypeNameByMethodTable(_targetPid, srcMT); } catch { }
+        if (srcType.Contains('.')) srcType = srcType[(srcType.LastIndexOf('.') + 1)..];
+        _status = $"{(_isServer ? "srv" : "cli")} {(IsHooked(addr) ? "HOOK" : "NOHOOK")} type{_type} calls={total} over={over} lastSrc={srcType}";
     }
 
     /// <summary>Follow tiered-JIT precode jmp stubs (E9 rel32) to the real method body. ClrMD's NativeCode
@@ -148,43 +138,30 @@ public sealed class RareSpawnPatcher
         if (cave == IntPtr.Zero) { _status = "alloc failed"; return; }
 
         var b = new List<byte>(); void E(params byte[] x) => b.AddRange(x); void U32(int v) => b.AddRange(BitConverter.GetBytes(v));
-        var fixHot = new List<int>(); var fixCold = new List<int>(); var fixOrig = new List<int>();
+        var fixOrig = new List<int>();
         // r10, r11 are scratch and not argument registers at NewNPC entry — safe to clobber.
+        // rcx = source (arg0), r9d = Type (arg3).
         E(0x4C, 0x8B, 0x1C, 0x24);                             // mov r11, [rsp]   (return address)
-        // diagnostics: record EVERY NewNPC call's caller + count
         E(0x49, 0xBA); b.AddRange(BitConverter.GetBytes(_cfg.ToInt64())); // mov r10, &cfg
-        E(0x4D, 0x89, 0x5A, 0x10);                             // mov [r10+16], r11  (lastRet)
-        E(0x41, 0xFF, 0x42, 0x0C);                             // inc dword [r10+12] (totalCalls)
-        // in HOT range? -> DOIT
-        E(0x49, 0xBA); b.AddRange(BitConverter.GetBytes((long)_hotLo)); // mov r10, hotLo
+        E(0x4D, 0x89, 0x5A, 0x10);                             // mov [r10+16], r11  (lastRet diag)
+        E(0x41, 0xFF, 0x42, 0x0C);                             // inc dword [r10+12] (total diag)
+        E(0x48, 0x85, 0xC9);                                   // test rcx, rcx
+        E(0x0F, 0x84); fixOrig.Add(b.Count); U32(0);           // jz ORIG (no source)
+        E(0x4C, 0x8B, 0x19);                                   // mov r11, [rcx]   (source MethodTable)
+        E(0x4D, 0x89, 0x5A, 0x18);                             // mov [r10+24], r11 (srcMT diag)
+        E(0x49, 0xBA); b.AddRange(BitConverter.GetBytes((long)_spawnSrcMT)); // mov r10, spawnSrcMT
         E(0x4D, 0x39, 0xD3);                                   // cmp r11, r10
-        E(0x0F, 0x82); fixCold.Add(b.Count); U32(0);           // jb chkCold
-        E(0x49, 0xBA); b.AddRange(BitConverter.GetBytes((long)_hotHi)); // mov r10, hotHi
-        E(0x4D, 0x39, 0xD3);                                   // cmp r11, r10
-        int jDoit = -1;
-        E(0x0F, 0x82); jDoit = b.Count; U32(0);                // jb DOIT (in hot)
-        int chkCold = b.Count;                                 // chkCold:
-        // in COLD range? -> DOIT, else ORIG
-        E(0x49, 0xBA); b.AddRange(BitConverter.GetBytes((long)_coldLo)); // mov r10, coldLo
-        E(0x4D, 0x39, 0xD3);                                   // cmp r11, r10
-        E(0x0F, 0x82); fixOrig.Add(b.Count); U32(0);           // jb ORIG
-        E(0x49, 0xBA); b.AddRange(BitConverter.GetBytes((long)_coldHi)); // mov r10, coldHi
-        E(0x4D, 0x39, 0xD3);                                   // cmp r11, r10
-        E(0x0F, 0x83); fixOrig.Add(b.Count); U32(0);           // jae ORIG
-        int doit = b.Count;                                    // DOIT:
+        E(0x0F, 0x85); fixOrig.Add(b.Count); U32(0);           // jne ORIG (not natural-spawn source)
         E(0x49, 0xBB); b.AddRange(BitConverter.GetBytes(_cfg.ToInt64()));    // mov r11, &cfg
         E(0x41, 0x80, 0x3B, 0x00);                             // cmp byte [r11], 0
         E(0x0F, 0x84); fixOrig.Add(b.Count); U32(0);           // je ORIG (disabled)
         E(0x45, 0x8B, 0x4B, 0x04);                             // mov r9d, [r11+4]  (override Type)
-        E(0x41, 0xFF, 0x43, 0x08);                             // inc dword [r11+8] (hit counter)
+        E(0x41, 0xFF, 0x43, 0x08);                             // inc dword [r11+8] (overrides)
         int orig = b.Count;                                    // ORIG:
 
         b.AddRange(head.Take(disp));                           // displaced prologue
         b.Add(0xE9); b.AddRange(BitConverter.GetBytes((int)((entry.ToInt64() + disp) - (cave.ToInt64() + b.Count + 4))));
         var code = b.ToArray();
-        // patch internal rel32s
-        BitConverter.GetBytes(chkCold - (fixCold[0] + 4)).CopyTo(code, fixCold[0]);
-        BitConverter.GetBytes(doit - (jDoit + 4)).CopyTo(code, jDoit);
         foreach (var p in fixOrig) BitConverter.GetBytes(orig - (p + 4)).CopyTo(code, p);
         mem.WriteBytes(cave, code);
 

@@ -355,6 +355,22 @@ public static class TmlDiscovery
         catch { return "?"; }
     }
 
+    /// <summary>Resolve the type name for a runtime MethodTable pointer (to identify a captured source object).</summary>
+    public static string TypeNameByMethodTable(int pid, ulong mt)
+    {
+        if (mt == 0) return "";
+        try
+        {
+            using var dt = DataTarget.CreateSnapshotAndAttach(pid);
+            var clr = dt.ClrVersions.FirstOrDefault();
+            if (clr == null) return "?";
+            using var runtime = clr.CreateRuntime();
+            var t = runtime.GetTypeByMethodTable(mt);
+            return t?.Name ?? "<unknown>";
+        }
+        catch { return "?"; }
+    }
+
     /// <summary>Resolve a type's MethodTable pointer (object[+0x00] holds it; used to identify a runtime type).</summary>
     public static ulong ResolveTypeMethodTable(int pid, string typeName)
     {
