@@ -78,7 +78,7 @@ public static class CheatTable
             if (d.Kind.Equals("spawnboost", StringComparison.OrdinalIgnoreCase))
             {
                 EmitGroup(rows, ref lastGroup, d.Group);
-                rows.Add(new CheatRow { Kind = RowKind.SpawnBoost, Group = d.Group, Desc = d.Desc, InjectValue = d.Value ?? "30" });
+                rows.Add(new CheatRow { Kind = RowKind.SpawnBoost, Group = d.Group, Desc = d.Desc, PatchMethod = d.Method ?? "max", InjectValue = d.Value ?? "60" });
                 continue;
             }
             if (d.Kind.Equals("infammo", StringComparison.OrdinalIgnoreCase))
