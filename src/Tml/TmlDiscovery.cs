@@ -336,23 +336,25 @@ public static class TmlDiscovery
         return (0, 0, 0, 0);
     }
 
-    /// <summary>Find which managed method contains a given instruction pointer (for diagnosing callers).</summary>
-    public static string MethodNameAt(int pid, ulong ip)
+    /// <summary>Find the method containing an instruction pointer, with its native code range. Resolves the
+    /// REAL executing method — including MonoMod-generated dynamic copies of detoured vanilla methods
+    /// (tModLoader patches NPC.SpawnNPC into a "(dynamicClass).NPC::SpawnNPC>" method) which a name lookup
+    /// can't reach.</summary>
+    public static (string name, ulong code, ulong size) MethodInfoAt(int pid, ulong ip)
     {
-        if (ip == 0) return "";
+        if (ip == 0) return ("", 0, 0);
         try
         {
             using var dt = DataTarget.CreateSnapshotAndAttach(pid);
             var clr = dt.ClrVersions.FirstOrDefault();
-            if (clr == null) return "?";
+            if (clr == null) return ("?", 0, 0);
             using var runtime = clr.CreateRuntime();
             var m = runtime.GetMethodByInstructionPointer(ip);
-            if (m == null) return $"<unknown>";
-            var tn = m.Type?.Name ?? "";
-            int dot = tn.LastIndexOf('.');
-            return $"{(dot >= 0 ? tn[(dot + 1)..] : tn)}.{m.Name}";
+            if (m == null) return ("<unknown>", 0, 0);
+            ulong size = 0; try { size = m.HotColdInfo.HotSize; } catch { }
+            return ($"{m.Type?.Name}.{m.Name}", m.NativeCode, size);
         }
-        catch { return "?"; }
+        catch { return ("?", 0, 0); }
     }
 
     /// <summary>Resolve the type name for a runtime MethodTable pointer (to identify a captured source object).</summary>

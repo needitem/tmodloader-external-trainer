@@ -27,8 +27,9 @@ public sealed class RareSpawnPatcher
     private int _targetPid = -1;
     private ProcessMemory? _mem;
     private bool _isServer;
-    private ulong _spawnSrcMT;                // MethodTable of EntitySource_SpawnNPC (natural-spawn source)
-    private IntPtr _cfg;                      // 32 bytes: [0]=enabled,[4]=type,[8]=overrides,[12]=total,[16]=lastRet(8),[24]=srcMT(8)
+    private ulong _scopeLo, _scopeHi;         // code range of the REAL (MonoMod-dynamic) NPC.SpawnNPC
+    private string _scopeName = "";           // what we locked the scope onto
+    private IntPtr _cfg;                      // 32 bytes: [0]=enabled,[4]=type,[8]=overrides,[12]=total,[16]=lastRet(8)
     private string _status = "off";
 
     private sealed class Hook { public IntPtr Cave; public ulong At; public byte[]? Orig; public ulong OrigAddr; }
@@ -47,7 +48,7 @@ public sealed class RareSpawnPatcher
 
     private void ResetTarget()
     {
-        _targetPid = -1; _isServer = false; _spawnSrcMT = 0;
+        _targetPid = -1; _isServer = false; _scopeLo = _scopeHi = 0; _scopeName = "";
         try { _mem?.Dispose(); } catch { }
         _mem = null;
     }
@@ -72,8 +73,6 @@ public sealed class RareSpawnPatcher
             _targetPid = wantPid;
             _isServer = server != null;
             _mem = ProcessMemory.Attach(Process.GetProcessById(wantPid));
-            // The natural-spawn source object type — scope the override to calls that pass it.
-            _spawnSrcMT = TmlDiscovery.ResolveTypeMethodTable(wantPid, "Terraria.DataStructures.EntitySource_SpawnNPC");
         }
         if (_mem == null) { _status = "no mem"; return; }
 
@@ -85,19 +84,36 @@ public sealed class RareSpawnPatcher
         {
             _cfg = _mem.AllocNear((IntPtr)addr, 32, Native.MemoryProtection.ExecuteReadWrite);
             if (_cfg == IntPtr.Zero) { _status = "cfg alloc failed"; return; }
-            _mem.WriteBytes((IntPtr)(_cfg.ToInt64() + 8), new byte[24]); // reset counters + lastRet + srcMT
+            _mem.WriteBytes((IntPtr)(_cfg.ToInt64() + 8), new byte[16]); // reset counters + lastRet
         }
         _mem.WriteByte(_cfg, 1);
         _mem.WriteInt32((IntPtr)(_cfg.ToInt64() + 4), _type);
 
-        if (!IsHooked(addr)) { RestoreHookOnly(); InstallCave(addr); }
+        bool reinstall = !IsHooked(addr);
 
-        int over = 0, total = 0; ulong srcMT = 0;
-        try { over = _mem.ReadInt32((IntPtr)(_cfg.ToInt64() + 8)); total = _mem.ReadInt32((IntPtr)(_cfg.ToInt64() + 12)); srcMT = (ulong)_mem.ReadInt64((IntPtr)(_cfg.ToInt64() + 24)); } catch { }
-        string srcType = "";
-        try { if (srcMT != 0) srcType = TmlDiscovery.TypeNameByMethodTable(_targetPid, srcMT); } catch { }
-        if (srcType.Contains('.')) srcType = srcType[(srcType.LastIndexOf('.') + 1)..];
-        _status = $"{(_isServer ? "srv" : "cli")} {(IsHooked(addr) ? "HOOK" : "NOHOOK")} type{_type} calls={total} over={over} lastSrc={srcType}";
+        // Auto-discover the REAL spawner: resolve the last observed NewNPC caller. NewNPC has many
+        // callers (bosses, mods); we only lock the scope onto vanilla NPC.SpawnNPC — which tModLoader
+        // runs as a MonoMod dynamic method, so a name lookup misses it but the live caller IP finds it.
+        ulong lastRet = 0;
+        try { lastRet = (ulong)_mem.ReadInt64((IntPtr)(_cfg.ToInt64() + 16)); } catch { }
+        if (lastRet != 0)
+        {
+            var (nm, code, size) = TmlDiscovery.MethodInfoAt(_targetPid, lastRet);
+            if (code != 0 && size != 0 && (nm.Contains("NPC::SpawnNPC") || nm.Contains(".NPC.SpawnNPC")))
+            {
+                if (code != _scopeLo || code + size != _scopeHi)
+                { _scopeLo = code; _scopeHi = code + size; _scopeName = nm; reinstall = true; }
+            }
+        }
+
+        // A 0/0 scope makes the cave capture-only (never matches), which is exactly what we want
+        // until the spawner is discovered; once locked, re-install bakes in the real range.
+        if (reinstall) { RestoreHookOnly(); InstallCave(addr); }
+
+        int over = 0, total = 0;
+        try { over = _mem.ReadInt32((IntPtr)(_cfg.ToInt64() + 8)); total = _mem.ReadInt32((IntPtr)(_cfg.ToInt64() + 12)); } catch { }
+        string scope = _scopeLo != 0 ? "LOCKED" : "finding…";
+        _status = $"{(_isServer ? "srv" : "cli")} {(IsHooked(addr) ? "HOOK" : "NOHOOK")} type{_type} calls={total} over={over} scope={scope}";
     }
 
     /// <summary>Follow tiered-JIT precode jmp stubs (E9 rel32) to the real method body. ClrMD's NativeCode
@@ -140,18 +156,17 @@ public sealed class RareSpawnPatcher
         var b = new List<byte>(); void E(params byte[] x) => b.AddRange(x); void U32(int v) => b.AddRange(BitConverter.GetBytes(v));
         var fixOrig = new List<int>();
         // r10, r11 are scratch and not argument registers at NewNPC entry — safe to clobber.
-        // rcx = source (arg0), r9d = Type (arg3).
+        // r9d = Type (arg3). Override it only when the caller (return address) is inside the spawner.
         E(0x4C, 0x8B, 0x1C, 0x24);                             // mov r11, [rsp]   (return address)
         E(0x49, 0xBA); b.AddRange(BitConverter.GetBytes(_cfg.ToInt64())); // mov r10, &cfg
         E(0x4D, 0x89, 0x5A, 0x10);                             // mov [r10+16], r11  (lastRet diag)
         E(0x41, 0xFF, 0x42, 0x0C);                             // inc dword [r10+12] (total diag)
-        E(0x48, 0x85, 0xC9);                                   // test rcx, rcx
-        E(0x0F, 0x84); fixOrig.Add(b.Count); U32(0);           // jz ORIG (no source)
-        E(0x4C, 0x8B, 0x19);                                   // mov r11, [rcx]   (source MethodTable)
-        E(0x4D, 0x89, 0x5A, 0x18);                             // mov [r10+24], r11 (srcMT diag)
-        E(0x49, 0xBA); b.AddRange(BitConverter.GetBytes((long)_spawnSrcMT)); // mov r10, spawnSrcMT
+        E(0x49, 0xBA); b.AddRange(BitConverter.GetBytes((long)_scopeLo)); // mov r10, scopeLo
         E(0x4D, 0x39, 0xD3);                                   // cmp r11, r10
-        E(0x0F, 0x85); fixOrig.Add(b.Count); U32(0);           // jne ORIG (not natural-spawn source)
+        E(0x0F, 0x82); fixOrig.Add(b.Count); U32(0);           // jb ORIG (below spawner)
+        E(0x49, 0xBA); b.AddRange(BitConverter.GetBytes((long)_scopeHi)); // mov r10, scopeHi
+        E(0x4D, 0x39, 0xD3);                                   // cmp r11, r10
+        E(0x0F, 0x83); fixOrig.Add(b.Count); U32(0);           // jae ORIG (at/above spawner)
         E(0x49, 0xBB); b.AddRange(BitConverter.GetBytes(_cfg.ToInt64()));    // mov r11, &cfg
         E(0x41, 0x80, 0x3B, 0x00);                             // cmp byte [r11], 0
         E(0x0F, 0x84); fixOrig.Add(b.Count); U32(0);           // je ORIG (disabled)

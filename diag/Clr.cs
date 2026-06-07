@@ -498,6 +498,15 @@ internal static class ClrDiscovery
         Console.WriteLine($"{typeName}  MethodTable=0x{t.MethodTable:X}");
     }
 
+    public static void MethodAt(int pid, ulong ip)
+    {
+        using var dt = DataTarget.CreateSnapshotAndAttach(pid);
+        using var runtime = dt.ClrVersions.First().CreateRuntime();
+        var m = runtime.GetMethodByInstructionPointer(ip);
+        if (m == null) { Console.WriteLine($"0x{ip:X}: <no managed method> (likely a JIT helper / dynamic stub)"); return; }
+        Console.WriteLine($"0x{ip:X}: {m.Type?.Name}.{m.Name}  (method @0x{m.NativeCode:X})");
+    }
+
     public static void DisasmAt(int pid, ulong addr, int count)
     {
         using var dt = DataTarget.CreateSnapshotAndAttach(pid);

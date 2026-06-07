@@ -1331,6 +1331,23 @@ if (mode == "disasmaddr")
     return 0;
 }
 
+if (mode == "disasmpid") // disasmpid <pid> <addr> [count]
+{
+    int pid = int.Parse(args[1]);
+    ulong a = Convert.ToUInt64(args[2].Replace("0x", ""), 16);
+    int n = args.Length > 3 ? Convert.ToInt32(args[3], 16) : 0x40;
+    ClrDiscovery.DisasmAt(pid, a, n);
+    return 0;
+}
+
+if (mode == "methodat") // methodat <pid> <addr> [<addr> ...]
+{
+    int pid = int.Parse(args[1]);
+    for (int k = 2; k < args.Length; k++)
+        ClrDiscovery.MethodAt(pid, Convert.ToUInt64(args[k].Replace("0x", ""), 16));
+    return 0;
+}
+
 if (mode == "dump")
 {
     ClrDiscovery.DumpMethod(proc.Id, args.Length > 1 ? args[1] : "ItemCheck_UseMiningTools_ActuallyUseMiningTool",
