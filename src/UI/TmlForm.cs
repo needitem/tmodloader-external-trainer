@@ -931,7 +931,8 @@ public sealed class TmlForm : Form
         string mp = _fMana != null && _fManaMax != null ? $"MP {_engine.ReadField(_fMana)}/{_engine.ReadField(_fManaMax)}" : "";
         string biome = "";
         try { var b = _engine.CurrentBiomeText(); if (!string.IsNullOrEmpty(b)) biome = $"   🌍 {b}"; } catch { }
-        return $"{hp}   {mp}{biome}";
+        string rare = _rareSpawn.Enabled ? $"   🐲 {_rareSpawn.Status}" : "";
+        return $"{hp}   {mp}{biome}{rare}";
     }
 
     private void AppendLog(string msg)

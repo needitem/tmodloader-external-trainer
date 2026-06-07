@@ -103,7 +103,8 @@ public sealed class RareSpawnPatcher
         }
 
         int hits = 0; try { hits = _mem.ReadInt32((IntPtr)(_cfg.ToInt64() + 8)); } catch { }
-        _status = $"{(_isServer ? "server" : "client")} pid {_targetPid} — type {_type}, overrides={hits}, cold={(cold != 0 ? "yes" : "no")}";
+        bool hooked = IsHooked(addr);
+        _status = $"{(_isServer ? "server" : "client")} pid {_targetPid}, {(hooked ? "HOOKED" : "NOT hooked")}, type {_type}, overrides={hits}, cold={(cold != 0 ? "yes" : "no")}";
     }
 
     /// <summary>Follow tiered-JIT precode jmp stubs (E9 rel32) to the real method body. ClrMD's NativeCode
