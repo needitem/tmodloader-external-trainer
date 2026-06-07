@@ -292,6 +292,30 @@ public static class TmlDiscovery
         return result;
     }
 
+    /// <summary>Resolve the live addresses of one or more static fields on a type, in a single snapshot.
+    /// Static-field storage is allocated once for the process lifetime, so these addresses are stable
+    /// (unlike JIT'd code) and can be written directly.</summary>
+    public static Dictionary<string, ulong> ResolveStaticFields(int pid, string typeName, params string[] fieldNames)
+    {
+        var result = new Dictionary<string, ulong>();
+        using var dt = DataTarget.CreateSnapshotAndAttach(pid);
+        var clr = dt.ClrVersions.FirstOrDefault();
+        if (clr == null) return result;
+        using var runtime = clr.CreateRuntime();
+        var t = FindType(runtime, typeName);
+        if (t == null) return result;
+        foreach (var name in fieldNames)
+        {
+            var f = t.GetStaticFieldByName(name);
+            if (f == null) continue;
+            foreach (var domain in runtime.AppDomains)
+            {
+                try { ulong a = f.GetAddress(domain); if (a != 0) { result[name] = a; break; } } catch { }
+            }
+        }
+        return result;
+    }
+
     private static int OffsetOf(ClrType t, string name, int fallback)
     {
         var f = t.GetFieldByName(name);

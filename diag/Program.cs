@@ -1305,6 +1305,12 @@ if (mode == "typefields")
     return 0;
 }
 
+if (mode == "staticfields")
+{
+    ClrDiscovery.ListStaticFields(proc.Id, args.Length > 1 ? args[1] : "Terraria.NPC", args.Length > 2 ? args[2] : "");
+    return 0;
+}
+
 if (mode == "dump")
 {
     ClrDiscovery.DumpMethod(proc.Id, args.Length > 1 ? args[1] : "ItemCheck_UseMiningTools_ActuallyUseMiningTool",

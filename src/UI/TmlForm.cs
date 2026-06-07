@@ -29,6 +29,7 @@ public sealed class TmlForm : Form
 
     private int _attachThrottle = 10; // attempt auto-attach on the first tick
     private string _lastScopedStatus = "";
+    private string _lastSpawnStatus = "";
     private TmlField? _fLife, _fLifeMax, _fMana, _fManaMax;
 
     // High-frequency writer: per-frame-recomputed values (move/mine speed) must be written
@@ -41,6 +42,8 @@ public sealed class TmlForm : Form
     private Thread? _stickyThread;
     // "100% drop, only for me" — targets the MP host server process when present.
     private readonly ScopedDropPatcher _scopedDrop;
+    // Spawn-rate boost (rare mobs appear far more often) — also targets the MP server.
+    private readonly SpawnBoostPatcher _spawnBoost;
 
     [DllImport("winmm.dll")] private static extern uint timeBeginPeriod(uint ms);
     [DllImport("winmm.dll")] private static extern uint timeEndPeriod(uint ms);
@@ -63,6 +66,7 @@ public sealed class TmlForm : Form
 
         _sticky = new StickyPatcher(_engine);
         _scopedDrop = new ScopedDropPatcher(_engine);
+        _spawnBoost = new SpawnBoostPatcher(_engine);
         _engine.Log += AppendLog;
         _btnAttach.Click += (_, _) => DoAttach();
         _btnRescan.Click += (_, _) => DoRescan();
@@ -88,7 +92,8 @@ public sealed class TmlForm : Form
         {
             try { if (_engine.Attached && _sticky.AnyActive) _sticky.TickOnce(); } catch { }
             try { if (_scopedDrop.Enabled) _scopedDrop.Tick(); } catch { }
-            Thread.Sleep(_sticky.AnyActive || _scopedDrop.Enabled ? 2500 : 1000);
+            try { if (_spawnBoost.Enabled) _spawnBoost.Tick(); } catch { }
+            Thread.Sleep(_sticky.AnyActive || _scopedDrop.Enabled || _spawnBoost.Enabled ? 2500 : 1000);
         }
     }
 
@@ -305,6 +310,7 @@ public sealed class TmlForm : Form
             }
             _sticky.Clear(); // fresh process: drop any stale patched-address bookkeeping
             _scopedDrop.Clear();
+            _spawnBoost.Clear();
             CacheVitalFields();
             lock (_engine.Sync) LoadAndApplyConfig(); // restore previously-enabled cheats
             RebuildGrid();
@@ -362,7 +368,7 @@ public sealed class TmlForm : Form
             {
                 if (r.Kind is RowKind.GroupHeader or RowKind.Action || !r.Active) continue;
                 data[r.Desc] = r.Kind == RowKind.Value ? (r.FrozenText ?? "")
-                    : r.Kind is RowKind.DropMult or RowKind.PatchInt ? r.InjectValue
+                    : r.Kind is RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost ? r.InjectValue
                     : "on";
             }
             System.IO.File.WriteAllText(ConfigPath,
@@ -389,7 +395,7 @@ public sealed class TmlForm : Form
             if (!data.TryGetValue(r.Desc, out var saved)) continue;
             r.Active = true;
             if (r.Kind == RowKind.Value) r.FrozenText = saved;
-            else if (r.Kind is RowKind.DropMult or RowKind.PatchInt && saved.Length > 0 && int.TryParse(saved, out _)) r.InjectValue = saved;
+            else if (r.Kind is RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost && saved.Length > 0 && int.TryParse(saved, out _)) r.InjectValue = saved;
             try { ApplyActiveChange(r, null); applied++; }
             catch { r.Active = false; }
         }
@@ -435,9 +441,9 @@ public sealed class TmlForm : Form
                 row.Cells["type"].Value = TypeLabel(r);
                 row.Cells["value"].Value = r.Kind == RowKind.Action ? "▶ click On"
                     : r.Kind == RowKind.Value ? (r.FrozenText ?? "—")
-                    : r.Kind is RowKind.DropMult or RowKind.PatchInt ? r.InjectValue
+                    : r.Kind is RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost ? r.InjectValue
                     : "—";
-                row.Cells["value"].ReadOnly = r.Kind is not (RowKind.Value or RowKind.DropMult or RowKind.PatchInt);
+                row.Cells["value"].ReadOnly = r.Kind is not (RowKind.Value or RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost);
             }
         }
         _grid.ResumeLayout();
@@ -458,6 +464,7 @@ public sealed class TmlForm : Form
         RowKind.PatchInt => "value",
         RowKind.Crate => "fishing",
         RowKind.ScopedDrop => "drop(me)",
+        RowKind.SpawnBoost => "spawn",
         RowKind.BuffClear => "no-debuff",
         RowKind.InfAmmo => "ammo",
         RowKind.Vanity => "vanity",
@@ -578,6 +585,15 @@ public sealed class TmlForm : Form
                 if (r.Active) { _scopedDrop.Enable(); AppendLog($"ON: {r.Desc} (auto-detects MP server, scoped to your character)"); }
                 else { _scopedDrop.Disable(); AppendLog($"OFF: {r.Desc}"); }
                 break;
+            case RowKind.SpawnBoost:
+                if (r.Active)
+                {
+                    _spawnBoost.SetValues(int.TryParse(r.InjectValue, out var sr) ? sr : 30, 40);
+                    _spawnBoost.Enable();
+                    AppendLog($"ON: {r.Desc} (spawnRate {r.InjectValue}, lower = more spawns; works on MP server)");
+                }
+                else { _spawnBoost.Disable(); AppendLog($"OFF: {r.Desc}"); }
+                break;
             case RowKind.BuffClear:
                 // the high-frequency writer removes the buff each tick while active.
                 AppendLog($"{(r.Active ? "Enabled" : "Disabled")} {r.Desc}");
@@ -645,7 +661,7 @@ public sealed class TmlForm : Form
     {
         if (e.RowIndex < 0) return;
         var grow = _grid.Rows[e.RowIndex];
-        if (grow.Tag is not CheatRow r || r.Kind is not (RowKind.Value or RowKind.DropMult or RowKind.PatchInt)) return;
+        if (grow.Tag is not CheatRow r || r.Kind is not (RowKind.Value or RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost)) return;
         if (_grid.Columns[e.ColumnIndex].Name == "value")
         {
             _grid.BeginEdit(true);
@@ -672,6 +688,14 @@ public sealed class TmlForm : Form
             if (!int.TryParse(text.Trim(), out var v) || v < 0) { v = 0; grow.Cells["value"].Value = "0"; }
             r.InjectValue = v.ToString();
             if (r.Active) { _sticky.Unregister(r.PatchMethod); _sticky.Register(r.PatchMethod, RetInt(v)); AppendLog($"{r.Desc} set to {v}"); }
+            SaveConfig();
+            return;
+        }
+        if (r.Kind == RowKind.SpawnBoost)
+        {
+            if (!int.TryParse(text.Trim(), out var sv) || sv < 1) { sv = 1; grow.Cells["value"].Value = "1"; }
+            r.InjectValue = sv.ToString();
+            if (r.Active) { _spawnBoost.SetValues(sv, 40); AppendLog($"Spawn rate set to {sv} (lower = more spawns)"); }
             SaveConfig();
             return;
         }
@@ -704,6 +728,7 @@ public sealed class TmlForm : Form
             else if (r.Kind == RowKind.DropMult) { _engine.Injector?.UnhookDropMultiplier(); }
             else if (r.Kind == RowKind.Crate) { _engine.Injector?.UnhookAlwaysCrate(); }
             else if (r.Kind == RowKind.ScopedDrop) { _scopedDrop.Disable(); }
+            else if (r.Kind == RowKind.SpawnBoost) { _spawnBoost.Disable(); }
         }
         foreach (DataGridViewRow gr in _grid.Rows)
             if (gr.Tag is CheatRow rr && rr.Kind != RowKind.GroupHeader)
@@ -741,6 +766,9 @@ public sealed class TmlForm : Form
 
             if (_scopedDrop.Enabled && _scopedDrop.Status != _lastScopedStatus)
             { _lastScopedStatus = _scopedDrop.Status; AppendLog($"[100% drop] {_lastScopedStatus}"); }
+
+            if (_spawnBoost.Enabled && _spawnBoost.Status != _lastSpawnStatus)
+            { _lastSpawnStatus = _spawnBoost.Status; AppendLog($"[spawn boost] {_lastSpawnStatus}"); }
 
             // Fast-tools is asserted by the high-frequency writer (the held item is recomputed
             // every frame by Calamity, so a slow write loses). The slow tick re-snapshots
@@ -793,6 +821,8 @@ public sealed class TmlForm : Form
         _timer.Stop();
         _writerRun = false;
         _writer?.Join(200);
+        try { _scopedDrop.Disable(); } catch { }
+        try { _spawnBoost.Disable(); } catch { } // restore vanilla spawn defaults on the target
         lock (_engine.Sync) _engine.Dispose(); // restores any injected patches
         base.OnFormClosed(e);
     }
