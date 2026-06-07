@@ -426,7 +426,15 @@ public sealed class TmlForm : Form
             : r.Desc.Contains(find, StringComparison.OrdinalIgnoreCase));
     }
 
-    private sealed class RareItem { public int Type { get; set; } public string Display { get; set; } = ""; public override string ToString() => Display; }
+    private const string RarePlaceholder = "— pick a rare mob —";
+    private static string RareDisplay(int type, int stars, string name) => $"★{stars} {name} ({type})";
+    private static int ParseRareType(string? display)
+    {
+        if (string.IsNullOrEmpty(display)) return 0;
+        int open = display.LastIndexOf('('), close = display.LastIndexOf(')');
+        if (open < 0 || close <= open) return 0;
+        return int.TryParse(display.Substring(open + 1, close - open - 1), out var t) ? t : 0;
+    }
     private bool _building;
 
     private void RebuildGrid()
@@ -460,19 +468,16 @@ public sealed class TmlForm : Form
                 {
                     try
                     {
-                        var items = _rareNpcs.Select(x => new RareItem { Type = x.type, Display = $"★{x.stars} {x.name} ({x.type})" }).ToList();
-                        items.Insert(0, new RareItem { Type = 0, Display = "— pick a rare mob —" });
-                        var combo = new DataGridViewComboBoxCell
-                        {
-                            FlatStyle = FlatStyle.Flat,
-                            DisplayStyle = DataGridViewComboBoxDisplayStyle.DropDownButton,
-                            ValueMember = nameof(RareItem.Type),
-                            DisplayMember = nameof(RareItem.Display),
-                            DataSource = items,
-                        };
+                        // Plain string items (no DataSource binding — that throws when the cell isn't
+                        // yet attached). The NPC type is encoded in the trailing "(N)" and parsed back.
+                        var combo = new DataGridViewComboBoxCell { FlatStyle = FlatStyle.Flat, DisplayStyle = DataGridViewComboBoxDisplayStyle.DropDownButton };
+                        combo.Items.Add(RarePlaceholder);
+                        foreach (var x in _rareNpcs) combo.Items.Add(RareDisplay(x.type, x.stars, x.name));
                         row.Cells["value"] = combo;
                         int sel = int.TryParse(r.InjectValue, out var t) ? t : 0;
-                        combo.Value = items.Any(it => it.Type == sel) ? sel : 0;
+                        string disp = RarePlaceholder;
+                        if (sel > 0) foreach (var x in _rareNpcs) if (x.type == sel) { disp = RareDisplay(x.type, x.stars, x.name); break; }
+                        combo.Value = disp;
                         row.Cells["value"].ReadOnly = false;
                         comboOk = true;
                     }
@@ -733,8 +738,7 @@ public sealed class TmlForm : Form
         var grow = _grid.Rows[e.RowIndex];
         if (grow.Tag is not CheatRow r || r.Kind != RowKind.RareSpawn) return;
         if (_grid.Columns[e.ColumnIndex].Name != "value") return;
-        var v = grow.Cells["value"].Value;
-        int type = v is int iv ? iv : (int.TryParse(Convert.ToString(v), out var p) ? p : 0);
+        int type = ParseRareType(Convert.ToString(grow.Cells["value"].Value));
         r.InjectValue = type.ToString();
         if (type > 0) { _rareSpawn.SetType(type); AppendLog($"Rare spawn target: {RareName(type)}"); }
         SaveConfig();
