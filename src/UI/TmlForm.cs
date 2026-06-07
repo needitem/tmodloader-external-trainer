@@ -222,6 +222,9 @@ public sealed class TmlForm : Form
         _grid.CurrentCellDirtyStateChanged += (_, _) =>
         { if (_grid.IsCurrentCellDirty && _grid.CurrentCell is DataGridViewComboBoxCell) _grid.CommitEdit(DataGridViewDataErrorContexts.Commit); };
         _grid.CellValueChanged += Grid_CellValueChanged;
+        // The rare-spawn combo cell lives in a text column; WinForms surfaces transient value
+        // mismatches as a modal dialog. Suppress it — the combo still works correctly.
+        _grid.DataError += (_, e) => { e.ThrowException = false; e.Cancel = true; };
 
         BuildInvGrid();
     }
