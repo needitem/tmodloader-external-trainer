@@ -383,9 +383,12 @@ public sealed class TmlForm : Form
             var data = new Dictionary<string, string>();
             foreach (var r in _rows)
             {
-                if (r.Kind is RowKind.GroupHeader or RowKind.Action || !r.Active) continue;
-                data[r.Desc] = r.Kind == RowKind.Value ? (r.FrozenText ?? "")
-                    : r.Kind is RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost or RowKind.RareSpawn ? r.InjectValue
+                if (r.Kind is RowKind.GroupHeader or RowKind.Action) continue;
+                bool editable = r.Kind is RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost or RowKind.RareSpawn;
+                if (!r.Active && !editable) continue;          // inactive non-editable: nothing to remember
+                // Editable rows persist their value even when OFF (prefix "off:") so settings stick.
+                data[r.Desc] = editable ? (r.Active ? "" : "off:") + r.InjectValue
+                    : r.Kind == RowKind.Value ? (r.FrozenText ?? "")
                     : "on";
             }
             System.IO.File.WriteAllText(ConfigPath,
@@ -410,9 +413,20 @@ public sealed class TmlForm : Form
         {
             if (r.Kind is RowKind.GroupHeader or RowKind.Action) continue;
             if (!data.TryGetValue(r.Desc, out var saved)) continue;
+            bool editable = r.Kind is RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost or RowKind.RareSpawn;
+            bool inactive = saved.StartsWith("off:", StringComparison.Ordinal);
+            string val = inactive ? saved[4..] : saved;
+
+            // Restore an editable row's saved value regardless of on/off state.
+            if (editable && val.Length > 0 && int.TryParse(val, out var iv))
+            {
+                r.InjectValue = val;
+                if (r.Kind == RowKind.RareSpawn && iv > 0) _rareSelType = iv;
+            }
+            if (inactive) continue; // value remembered, but the cheat stays OFF
+
             r.Active = true;
-            if (r.Kind == RowKind.Value) r.FrozenText = saved;
-            else if (r.Kind is RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost or RowKind.RareSpawn && saved.Length > 0 && int.TryParse(saved, out _)) r.InjectValue = saved;
+            if (r.Kind == RowKind.Value) r.FrozenText = val;
             try { ApplyActiveChange(r, null); applied++; }
             catch { r.Active = false; }
         }
