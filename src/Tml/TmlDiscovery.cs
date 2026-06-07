@@ -336,6 +336,25 @@ public static class TmlDiscovery
         return (0, 0, 0, 0);
     }
 
+    /// <summary>Find which managed method contains a given instruction pointer (for diagnosing callers).</summary>
+    public static string MethodNameAt(int pid, ulong ip)
+    {
+        if (ip == 0) return "";
+        try
+        {
+            using var dt = DataTarget.CreateSnapshotAndAttach(pid);
+            var clr = dt.ClrVersions.FirstOrDefault();
+            if (clr == null) return "?";
+            using var runtime = clr.CreateRuntime();
+            var m = runtime.GetMethodByInstructionPointer(ip);
+            if (m == null) return $"<unknown>";
+            var tn = m.Type?.Name ?? "";
+            int dot = tn.LastIndexOf('.');
+            return $"{(dot >= 0 ? tn[(dot + 1)..] : tn)}.{m.Name}";
+        }
+        catch { return "?"; }
+    }
+
     /// <summary>Resolve a type's MethodTable pointer (object[+0x00] holds it; used to identify a runtime type).</summary>
     public static ulong ResolveTypeMethodTable(int pid, string typeName)
     {

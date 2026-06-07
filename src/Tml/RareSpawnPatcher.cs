@@ -105,7 +105,9 @@ public sealed class RareSpawnPatcher
         int over = 0, total = 0; ulong lastRet = 0;
         try { over = _mem.ReadInt32((IntPtr)(_cfg.ToInt64() + 8)); total = _mem.ReadInt32((IntPtr)(_cfg.ToInt64() + 12)); lastRet = (ulong)_mem.ReadInt64((IntPtr)(_cfg.ToInt64() + 16)); } catch { }
         bool inHot = lastRet >= _hotLo && lastRet < _hotHi;
-        _status = $"{(_isServer ? "srv" : "cli")} {(IsHooked(addr) ? "HOOK" : "NOHOOK")} type{_type} calls={total} over={over} lastRet=0x{lastRet:X} spawn=0x{_hotLo:X}-0x{_hotHi:X} {(inHot ? "IN" : "OUT")}";
+        string caller = "";
+        try { if (lastRet != 0) caller = TmlDiscovery.MethodNameAt(_targetPid, lastRet); } catch { }
+        _status = $"{(_isServer ? "srv" : "cli")} {(IsHooked(addr) ? "HOOK" : "NOHOOK")} type{_type} calls={total} over={over} caller={caller} {(inHot ? "IN" : "OUT")}";
     }
 
     /// <summary>Follow tiered-JIT precode jmp stubs (E9 rel32) to the real method body. ClrMD's NativeCode
