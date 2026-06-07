@@ -28,7 +28,7 @@ public sealed class RareSpawnPatcher
     private ProcessMemory? _mem;
     private bool _isServer;
     private ulong _hotLo, _hotHi, _coldLo, _coldHi;  // SpawnNPC hot+cold code ranges (natural-spawn caller)
-    private IntPtr _cfg;                      // 16 bytes: [0]=enabled, [4]=type, [8]=hit counter
+    private IntPtr _cfg;                      // 32 bytes: [0]=enabled,[4]=type,[8]=overrides,[12]=totalCalls,[16]=lastRet(8)
     private string _status = "off";
 
     private sealed class Hook { public IntPtr Cave; public ulong At; public byte[]? Orig; public ulong OrigAddr; }
@@ -87,9 +87,9 @@ public sealed class RareSpawnPatcher
 
         if (_cfg == IntPtr.Zero)
         {
-            _cfg = _mem.AllocNear((IntPtr)addr, 16, Native.MemoryProtection.ExecuteReadWrite);
+            _cfg = _mem.AllocNear((IntPtr)addr, 32, Native.MemoryProtection.ExecuteReadWrite);
             if (_cfg == IntPtr.Zero) { _status = "cfg alloc failed"; return; }
-            _mem.WriteInt32((IntPtr)(_cfg.ToInt64() + 8), 0); // reset hit counter
+            _mem.WriteBytes((IntPtr)(_cfg.ToInt64() + 8), new byte[16]); // reset counters + lastRet
         }
         _mem.WriteByte(_cfg, 1);
         _mem.WriteInt32((IntPtr)(_cfg.ToInt64() + 4), _type);
@@ -102,9 +102,10 @@ public sealed class RareSpawnPatcher
             InstallCave(addr);
         }
 
-        int hits = 0; try { hits = _mem.ReadInt32((IntPtr)(_cfg.ToInt64() + 8)); } catch { }
-        bool hooked = IsHooked(addr);
-        _status = $"{(_isServer ? "server" : "client")} pid {_targetPid}, {(hooked ? "HOOKED" : "NOT hooked")}, type {_type}, overrides={hits}, cold={(cold != 0 ? "yes" : "no")}";
+        int over = 0, total = 0; ulong lastRet = 0;
+        try { over = _mem.ReadInt32((IntPtr)(_cfg.ToInt64() + 8)); total = _mem.ReadInt32((IntPtr)(_cfg.ToInt64() + 12)); lastRet = (ulong)_mem.ReadInt64((IntPtr)(_cfg.ToInt64() + 16)); } catch { }
+        bool inHot = lastRet >= _hotLo && lastRet < _hotHi;
+        _status = $"{(_isServer ? "srv" : "cli")} {(IsHooked(addr) ? "HOOK" : "NOHOOK")} type{_type} calls={total} over={over} lastRet=0x{lastRet:X} spawn=0x{_hotLo:X}-0x{_hotHi:X} {(inHot ? "IN" : "OUT")}";
     }
 
     /// <summary>Follow tiered-JIT precode jmp stubs (E9 rel32) to the real method body. ClrMD's NativeCode
@@ -148,6 +149,10 @@ public sealed class RareSpawnPatcher
         var fixHot = new List<int>(); var fixCold = new List<int>(); var fixOrig = new List<int>();
         // r10, r11 are scratch and not argument registers at NewNPC entry — safe to clobber.
         E(0x4C, 0x8B, 0x1C, 0x24);                             // mov r11, [rsp]   (return address)
+        // diagnostics: record EVERY NewNPC call's caller + count
+        E(0x49, 0xBA); b.AddRange(BitConverter.GetBytes(_cfg.ToInt64())); // mov r10, &cfg
+        E(0x4D, 0x89, 0x5A, 0x10);                             // mov [r10+16], r11  (lastRet)
+        E(0x41, 0xFF, 0x42, 0x0C);                             // inc dword [r10+12] (totalCalls)
         // in HOT range? -> DOIT
         E(0x49, 0xBA); b.AddRange(BitConverter.GetBytes((long)_hotLo)); // mov r10, hotLo
         E(0x4D, 0x39, 0xD3);                                   // cmp r11, r10
