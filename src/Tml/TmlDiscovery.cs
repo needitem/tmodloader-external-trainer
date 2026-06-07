@@ -316,6 +316,99 @@ public static class TmlDiscovery
         return result;
     }
 
+    /// <summary>Resolve a method's current native code address AND hot-region size (for caller-range checks).</summary>
+    public static (ulong addr, ulong size) ResolveMethodRange(int pid, string typeName, string method)
+    {
+        using var dt = DataTarget.CreateSnapshotAndAttach(pid);
+        var clr = dt.ClrVersions.FirstOrDefault();
+        if (clr == null) return (0, 0);
+        using var runtime = clr.CreateRuntime();
+        var t = FindType(runtime, typeName);
+        if (t == null) return (0, 0);
+        foreach (var m in t.Methods)
+        {
+            if (m.Name != method || m.NativeCode == 0) continue;
+            ulong size = 0; try { size = m.HotColdInfo.HotSize; } catch { }
+            return (m.NativeCode, size);
+        }
+        return (0, 0);
+    }
+
+    /// <summary>Resolve a type's MethodTable pointer (object[+0x00] holds it; used to identify a runtime type).</summary>
+    public static ulong ResolveTypeMethodTable(int pid, string typeName)
+    {
+        using var dt = DataTarget.CreateSnapshotAndAttach(pid);
+        var clr = dt.ClrVersions.FirstOrDefault();
+        if (clr == null) return 0;
+        using var runtime = clr.CreateRuntime();
+        return FindType(runtime, typeName)?.MethodTable ?? 0;
+    }
+
+    /// <summary>Enumerate naturally-spawning enemies (boss/town/friendly excluded) with bestiary rarity stars,
+    /// for the "force rare spawns" picker. Higher stars = rarer.</summary>
+    public static List<(int type, int stars, string name)> EnumerateRareNpcs(int pid, int minStars)
+    {
+        var outList = new List<(int, int, string)>();
+        using var dt = DataTarget.CreateSnapshotAndAttach(pid);
+        var clr = dt.ClrVersions.FirstOrDefault();
+        if (clr == null) return outList;
+        using var runtime = clr.CreateRuntime();
+
+        var cs = FindType(runtime, "Terraria.ID.ContentSamples");
+        if (cs == null) return outList;
+
+        ClrObject ReadStatic(ClrType t, string name)
+        {
+            var f = t.GetStaticFieldByName(name);
+            if (f == null) return default;
+            foreach (var d in runtime.AppDomains) { try { var o = f.ReadObject(d); if (o.IsValid) return o; } catch { } }
+            return default;
+        }
+
+        var starsDict = ReadStatic(cs, "NpcBestiaryRarityStars");
+        if (!starsDict.IsValid) return outList;
+        var stars = new Dictionary<int, int>();
+        try
+        {
+            int c = starsDict.ReadField<int>("_count");
+            var en = starsDict.ReadObjectField("_entries").AsArray();
+            for (int i = 0; i < c; i++)
+            {
+                var e = en.GetStructValue(i);
+                try { int k = e.ReadField<int>("key"); int v = e.ReadField<int>("value"); if (k > 0) stars[k] = v; } catch { }
+            }
+        }
+        catch { }
+
+        var lang = FindType(runtime, "Terraria.Lang");
+        var namesObj = lang != null ? ReadStatic(lang, "_npcNameCache") : default;
+        bool haveNames = namesObj.IsValid;
+        var names = haveNames ? namesObj.AsArray() : default;
+
+        var samples = ReadStatic(cs, "NpcsByNetId");
+        if (!samples.IsValid) return outList;
+        try
+        {
+            int sc = samples.ReadField<int>("_count");
+            var sen = samples.ReadObjectField("_entries").AsArray();
+            for (int i = 0; i < sc; i++)
+            {
+                var e = sen.GetStructValue(i);
+                int type; ClrObject npc;
+                try { type = e.ReadField<int>("key"); npc = e.ReadObjectField("value"); } catch { continue; }
+                if (type <= 0 || !npc.IsValid) continue;
+                if (!stars.TryGetValue(type, out int st) || st < minStars) continue;
+                try { if (npc.ReadField<bool>("boss") || npc.ReadField<bool>("townNPC") || npc.ReadField<bool>("friendly")) continue; } catch { }
+                string nm = "";
+                try { if (haveNames && type < names.Length) { var lt = names.GetObjectValue(type); if (lt.IsValid) nm = lt.ReadStringField("_value") ?? ""; } } catch { }
+                if (string.IsNullOrWhiteSpace(nm)) nm = $"NPC {type}";
+                outList.Add((type, st, nm));
+            }
+        }
+        catch { }
+        return outList.OrderByDescending(x => x.Item2).ThenBy(x => x.Item3).ToList();
+    }
+
     private static int OffsetOf(ClrType t, string name, int fallback)
     {
         var f = t.GetFieldByName(name);

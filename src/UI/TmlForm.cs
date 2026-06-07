@@ -30,6 +30,7 @@ public sealed class TmlForm : Form
     private int _attachThrottle = 10; // attempt auto-attach on the first tick
     private string _lastScopedStatus = "";
     private string _lastSpawnStatus = "";
+    private string _lastRareStatus = "";
     private TmlField? _fLife, _fLifeMax, _fMana, _fManaMax;
 
     // High-frequency writer: per-frame-recomputed values (move/mine speed) must be written
@@ -44,6 +45,9 @@ public sealed class TmlForm : Form
     private readonly ScopedDropPatcher _scopedDrop;
     // Spawn-rate boost (rare mobs appear far more often) — also targets the MP server.
     private readonly SpawnBoostPatcher _spawnBoost;
+    // Force every natural spawn to a chosen rare mob — also targets the MP server.
+    private readonly RareSpawnPatcher _rareSpawn;
+    private List<(int type, int stars, string name)> _rareNpcs = new();
 
     [DllImport("winmm.dll")] private static extern uint timeBeginPeriod(uint ms);
     [DllImport("winmm.dll")] private static extern uint timeEndPeriod(uint ms);
@@ -67,6 +71,7 @@ public sealed class TmlForm : Form
         _sticky = new StickyPatcher(_engine);
         _scopedDrop = new ScopedDropPatcher(_engine);
         _spawnBoost = new SpawnBoostPatcher(_engine);
+        _rareSpawn = new RareSpawnPatcher(_engine);
         _engine.Log += AppendLog;
         _btnAttach.Click += (_, _) => DoAttach();
         _btnRescan.Click += (_, _) => DoRescan();
@@ -93,7 +98,8 @@ public sealed class TmlForm : Form
             try { if (_engine.Attached && _sticky.AnyActive) _sticky.TickOnce(); } catch { }
             try { if (_scopedDrop.Enabled) _scopedDrop.Tick(); } catch { }
             try { if (_spawnBoost.Enabled) _spawnBoost.Tick(); } catch { }
-            Thread.Sleep(_sticky.AnyActive || _scopedDrop.Enabled || _spawnBoost.Enabled ? 2500 : 1000);
+            try { if (_rareSpawn.Enabled) _rareSpawn.Tick(); } catch { }
+            Thread.Sleep(_sticky.AnyActive || _scopedDrop.Enabled || _spawnBoost.Enabled || _rareSpawn.Enabled ? 2500 : 1000);
         }
     }
 
@@ -212,6 +218,10 @@ public sealed class TmlForm : Form
         _grid.CellClick += Grid_CellClick;
         _grid.CellDoubleClick += Grid_CellDoubleClick;
         _grid.CellEndEdit += Grid_CellEndEdit;
+        // commit combo-box (rare-spawn picker) selections immediately
+        _grid.CurrentCellDirtyStateChanged += (_, _) =>
+        { if (_grid.IsCurrentCellDirty && _grid.CurrentCell is DataGridViewComboBoxCell) _grid.CommitEdit(DataGridViewDataErrorContexts.Commit); };
+        _grid.CellValueChanged += Grid_CellValueChanged;
 
         BuildInvGrid();
     }
@@ -311,6 +321,8 @@ public sealed class TmlForm : Form
             _sticky.Clear(); // fresh process: drop any stale patched-address bookkeeping
             _scopedDrop.Clear();
             _spawnBoost.Clear();
+            _rareSpawn.Clear();
+            try { _rareNpcs = TmlDiscovery.EnumerateRareNpcs(_engine.Proc!.Id, 2); AppendLog($"Loaded {_rareNpcs.Count} rare mobs for the spawn picker."); } catch { _rareNpcs = new(); }
             CacheVitalFields();
             lock (_engine.Sync) LoadAndApplyConfig(); // restore previously-enabled cheats
             RebuildGrid();
@@ -368,7 +380,7 @@ public sealed class TmlForm : Form
             {
                 if (r.Kind is RowKind.GroupHeader or RowKind.Action || !r.Active) continue;
                 data[r.Desc] = r.Kind == RowKind.Value ? (r.FrozenText ?? "")
-                    : r.Kind is RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost ? r.InjectValue
+                    : r.Kind is RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost or RowKind.RareSpawn ? r.InjectValue
                     : "on";
             }
             System.IO.File.WriteAllText(ConfigPath,
@@ -395,7 +407,7 @@ public sealed class TmlForm : Form
             if (!data.TryGetValue(r.Desc, out var saved)) continue;
             r.Active = true;
             if (r.Kind == RowKind.Value) r.FrozenText = saved;
-            else if (r.Kind is RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost && saved.Length > 0 && int.TryParse(saved, out _)) r.InjectValue = saved;
+            else if (r.Kind is RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost or RowKind.RareSpawn && saved.Length > 0 && int.TryParse(saved, out _)) r.InjectValue = saved;
             try { ApplyActiveChange(r, null); applied++; }
             catch { r.Active = false; }
         }
@@ -414,8 +426,12 @@ public sealed class TmlForm : Form
             : r.Desc.Contains(find, StringComparison.OrdinalIgnoreCase));
     }
 
+    private sealed class RareItem { public int Type; public string Display = ""; public override string ToString() => Display; }
+    private bool _building;
+
     private void RebuildGrid()
     {
+        _building = true;
         _grid.SuspendLayout();
         _grid.Rows.Clear();
         foreach (var r in Filtered())
@@ -434,6 +450,30 @@ public sealed class TmlForm : Form
                 ((DataGridViewCheckBoxCell)row.Cells["active"]).FlatStyle = FlatStyle.Flat;
                 row.Cells["active"].Style.SelectionBackColor = HeaderBg;
             }
+            else if (r.Kind == RowKind.RareSpawn)
+            {
+                row.Cells["active"].Value = r.Active;
+                row.Cells["desc"].Value = r.Desc;
+                row.Cells["type"].Value = TypeLabel(r);
+                if (_rareNpcs.Count > 0)
+                {
+                    var items = _rareNpcs.Select(x => new RareItem { Type = x.type, Display = $"★{x.stars} {x.name} ({x.type})" }).ToList();
+                    items.Insert(0, new RareItem { Type = 0, Display = "— pick a rare mob —" });
+                    var combo = new DataGridViewComboBoxCell
+                    {
+                        FlatStyle = FlatStyle.Flat,
+                        DisplayStyle = DataGridViewComboBoxDisplayStyle.DropDownButton,
+                        DataSource = items,
+                        DisplayMember = nameof(RareItem.Display),
+                        ValueMember = nameof(RareItem.Type),
+                    };
+                    row.Cells["value"] = combo;
+                    int sel = int.TryParse(r.InjectValue, out var t) ? t : 0;
+                    combo.Value = items.Any(it => it.Type == sel) ? sel : 0;
+                    row.Cells["value"].ReadOnly = false;
+                }
+                else { row.Cells["value"].Value = "(attach to load list)"; row.Cells["value"].ReadOnly = true; }
+            }
             else
             {
                 row.Cells["active"].Value = r.Active;
@@ -447,6 +487,7 @@ public sealed class TmlForm : Form
             }
         }
         _grid.ResumeLayout();
+        _building = false;
     }
 
     private static string TypeLabel(CheatRow r) => r.Kind switch
@@ -465,6 +506,7 @@ public sealed class TmlForm : Form
         RowKind.Crate => "fishing",
         RowKind.ScopedDrop => "drop(me)",
         RowKind.SpawnBoost => "spawn",
+        RowKind.RareSpawn => "rare▾",
         RowKind.BuffClear => "no-debuff",
         RowKind.InfAmmo => "ammo",
         RowKind.Vanity => "vanity",
@@ -594,6 +636,17 @@ public sealed class TmlForm : Form
                 }
                 else { _spawnBoost.Disable(); AppendLog($"OFF: {r.Desc}"); }
                 break;
+            case RowKind.RareSpawn:
+                if (r.Active)
+                {
+                    int rt = int.TryParse(r.InjectValue, out var rv) ? rv : 0;
+                    if (rt <= 0) { r.Active = false; AppendLog("Pick a rare mob from the dropdown first, then enable."); break; }
+                    _rareSpawn.SetType(rt);
+                    _rareSpawn.Enable();
+                    AppendLog($"ON: {r.Desc} → {RareName(rt)} (every natural spawn becomes this; works on MP server)");
+                }
+                else { _rareSpawn.Disable(); AppendLog($"OFF: {r.Desc}"); }
+                break;
             case RowKind.BuffClear:
                 // the high-frequency writer removes the buff each tick while active.
                 AppendLog($"{(r.Active ? "Enabled" : "Disabled")} {r.Desc}");
@@ -668,6 +721,19 @@ public sealed class TmlForm : Form
         }
     }
 
+    private void Grid_CellValueChanged(object? sender, DataGridViewCellEventArgs e)
+    {
+        if (_building || e.RowIndex < 0) return;
+        var grow = _grid.Rows[e.RowIndex];
+        if (grow.Tag is not CheatRow r || r.Kind != RowKind.RareSpawn) return;
+        if (_grid.Columns[e.ColumnIndex].Name != "value") return;
+        var v = grow.Cells["value"].Value;
+        int type = v is int iv ? iv : (int.TryParse(Convert.ToString(v), out var p) ? p : 0);
+        r.InjectValue = type.ToString();
+        if (type > 0) { _rareSpawn.SetType(type); AppendLog($"Rare spawn target: {RareName(type)}"); }
+        SaveConfig();
+    }
+
     private void Grid_CellEndEdit(object? sender, DataGridViewCellEventArgs e)
     {
         var grow = _grid.Rows[e.RowIndex];
@@ -729,6 +795,7 @@ public sealed class TmlForm : Form
             else if (r.Kind == RowKind.Crate) { _engine.Injector?.UnhookAlwaysCrate(); }
             else if (r.Kind == RowKind.ScopedDrop) { _scopedDrop.Disable(); }
             else if (r.Kind == RowKind.SpawnBoost) { _spawnBoost.Disable(); }
+            else if (r.Kind == RowKind.RareSpawn) { _rareSpawn.Disable(); }
         }
         foreach (DataGridViewRow gr in _grid.Rows)
             if (gr.Tag is CheatRow rr && rr.Kind != RowKind.GroupHeader)
@@ -770,6 +837,9 @@ public sealed class TmlForm : Form
             if (_spawnBoost.Enabled && _spawnBoost.Status != _lastSpawnStatus)
             { _lastSpawnStatus = _spawnBoost.Status; AppendLog($"[spawn boost] {_lastSpawnStatus}"); }
 
+            if (_rareSpawn.Enabled && _rareSpawn.Status != _lastRareStatus)
+            { _lastRareStatus = _rareSpawn.Status; AppendLog($"[rare spawn] {_lastRareStatus}"); }
+
             // Fast-tools is asserted by the high-frequency writer (the held item is recomputed
             // every frame by Calamity, so a slow write loses). The slow tick re-snapshots
             // all tools so non-held ones are covered and disable can restore them.
@@ -801,6 +871,12 @@ public sealed class TmlForm : Form
         }
     }
 
+    private string RareName(int type)
+    {
+        foreach (var x in _rareNpcs) if (x.type == type) return $"{x.name} ({type})";
+        return $"type {type}";
+    }
+
     private string VitalsText()
     {
         string hp = _fLife != null && _fLifeMax != null ? $"HP {_engine.ReadField(_fLife)}/{_engine.ReadField(_fLifeMax)}" : "";
@@ -823,6 +899,7 @@ public sealed class TmlForm : Form
         _writer?.Join(200);
         try { _scopedDrop.Disable(); } catch { }
         try { _spawnBoost.Disable(); } catch { } // restore vanilla spawn defaults on the target
+        try { _rareSpawn.Disable(); } catch { }  // remove the NewNPC cave on the target
         lock (_engine.Sync) _engine.Dispose(); // restores any injected patches
         base.OnFormClosed(e);
     }

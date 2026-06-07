@@ -1311,6 +1311,18 @@ if (mode == "staticfields")
     return 0;
 }
 
+if (mode == "typemt")
+{
+    ClrDiscovery.PrintTypeMethodTable(proc.Id, args.Length > 1 ? args[1] : "Terraria.DataStructures.EntitySource_SpawnNPC");
+    return 0;
+}
+
+if (mode == "rares")
+{
+    ClrDiscovery.ListRareNpcs(proc.Id, args.Length > 1 ? int.Parse(args[1]) : 2);
+    return 0;
+}
+
 if (mode == "dump")
 {
     ClrDiscovery.DumpMethod(proc.Id, args.Length > 1 ? args[1] : "ItemCheck_UseMiningTools_ActuallyUseMiningTool",

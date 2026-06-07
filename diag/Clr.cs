@@ -341,6 +341,61 @@ internal static class ClrDiscovery
         }
     }
 
+    /// <summary>Enumerate NPCs by bestiary rarity stars (higher = rarer), with names, for the rare-spawn picker.</summary>
+    public static void ListRareNpcs(int pid, int minStars)
+    {
+        using var dt = DataTarget.CreateSnapshotAndAttach(pid);
+        using var runtime = dt.ClrVersions.First().CreateRuntime();
+
+        var cs = FindType(runtime, "Terraria.ID.ContentSamples");
+        var fStars = cs?.GetStaticFieldByName("NpcBestiaryRarityStars");
+        if (fStars == null) { Console.WriteLine("NpcBestiaryRarityStars not found"); return; }
+        ClrObject dict = default;
+        foreach (var d in runtime.AppDomains) { try { var o = fStars.ReadObject(d); if (o.IsValid) { dict = o; break; } } catch { } }
+        if (!dict.IsValid) { Console.WriteLine("rarity dict null"); return; }
+        int count = dict.ReadField<int>("_count");
+        var entries = dict.ReadObjectField("_entries").AsArray();
+
+        var lang = FindType(runtime, "Terraria.Lang");
+        var fNames = lang?.GetStaticFieldByName("_npcNameCache");
+        ClrObject namesArr = default;
+        if (fNames != null) foreach (var d in runtime.AppDomains) { try { var o = fNames.ReadObject(d); if (o.IsValid) { namesArr = o; break; } } catch { } }
+        bool haveNames = namesArr.IsValid;
+        var names = haveNames ? namesArr.AsArray() : default;
+
+        // stars lookup
+        var stars = new Dictionary<int, int>();
+        for (int i = 0; i < count; i++)
+        {
+            var e = entries.GetStructValue(i);
+            try { int k = e.ReadField<int>("key"); int v = e.ReadField<int>("value"); if (k > 0) stars[k] = v; } catch { }
+        }
+
+        // iterate NpcsByNetId samples to filter out bosses / town / friendly
+        var fSamples = cs!.GetStaticFieldByName("NpcsByNetId");
+        ClrObject samples = default;
+        foreach (var d in runtime.AppDomains) { try { var o = fSamples!.ReadObject(d); if (o.IsValid) { samples = o; break; } } catch { } }
+        int scount = samples.ReadField<int>("_count");
+        var sentries = samples.ReadObjectField("_entries").AsArray();
+
+        var list = new List<(int type, int stars, string name)>();
+        for (int i = 0; i < scount; i++)
+        {
+            var e = sentries.GetStructValue(i);
+            int type; ClrObject npc;
+            try { type = e.ReadField<int>("key"); npc = e.ReadObjectField("value"); } catch { continue; }
+            if (type <= 0 || !npc.IsValid) continue;
+            if (!stars.TryGetValue(type, out int st) || st < minStars) continue;
+            try { if (npc.ReadField<bool>("boss") || npc.ReadField<bool>("townNPC") || npc.ReadField<bool>("friendly")) continue; } catch { }
+            string nm = "";
+            try { if (haveNames && type < names.Length) { var lt = names.GetObjectValue(type); if (lt.IsValid) nm = lt.ReadStringField("_value") ?? ""; } } catch { }
+            list.Add((type, st, nm));
+        }
+        foreach (var x in list.OrderByDescending(a => a.stars).ThenBy(a => a.type))
+            Console.WriteLine($"  type {x.type,-5} stars {x.stars}  {x.name}");
+        Console.WriteLine($"total {list.Count} enemies with stars>={minStars} (bosses/town/friendly excluded)");
+    }
+
     private static void DescribeRule(ClrObject rule, string indent)
     {
         string tn = rule.Type?.Name ?? "?";
@@ -431,6 +486,16 @@ internal static class ClrDiscovery
                 catch { }
             }
         }
+    }
+
+    /// <summary>Print a type's MethodTable pointer (used to identify an object's runtime type at +0x00).</summary>
+    public static void PrintTypeMethodTable(int pid, string typeName)
+    {
+        using var dt = DataTarget.CreateSnapshotAndAttach(pid);
+        using var runtime = dt.ClrVersions.First().CreateRuntime();
+        var t = FindType(runtime, typeName);
+        if (t == null) { Console.WriteLine($"{typeName} NOT FOUND"); return; }
+        Console.WriteLine($"{typeName}  MethodTable=0x{t.MethodTable:X}");
     }
 
     public static void ListMethods(int pid, string sub, string typeName = "Terraria.Player")

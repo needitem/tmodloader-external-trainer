@@ -58,5 +58,6 @@
 
   { "group": "⚔️ Combat (method patch)", "desc": "All Banner Effects (vs all enemies)", "kind": "patch", "method": "Player.HasNPCBannerBuff", "value": "1" },
 
-  { "group": "🐲 Spawning (rare mobs)", "desc": "Spawn Rate Boost — rare mobs appear far more often (edit: spawn interval, lower = more; works in MP)", "kind": "spawnboost", "value": "30" }
+  { "group": "🐲 Spawning (rare mobs)", "desc": "Spawn Rate Boost — rare mobs appear far more often (edit: spawn interval, lower = more; works in MP)", "kind": "spawnboost", "value": "30" },
+  { "group": "🐲 Spawning (rare mobs)", "desc": "Force Rare Spawns — pick a mob; every natural spawn becomes it (dropdown, sorted by rarity; works in MP)", "kind": "rarespawn", "value": "0" }
 ]
