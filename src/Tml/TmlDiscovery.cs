@@ -485,6 +485,163 @@ public static class TmlDiscovery
         return outList.OrderByDescending(x => x.Item2).ThenBy(x => x.Item3).ToList();
     }
 
+    /// <summary>[DEBUG] Dump the memory layout of the world-tile types so the external tile reader
+    /// can be written. Reports Tilemap/Tile field offsets and the live Main.tile array fields
+    /// (element type, length, stride) plus the world dimensions. Run once against the live game.</summary>
+    public static string DumpTileLayout(int pid)
+    {
+        var sb = new System.Text.StringBuilder();
+        try
+        {
+            using var dt = DataTarget.CreateSnapshotAndAttach(pid);
+            var clr = dt.ClrVersions.FirstOrDefault();
+            if (clr == null) return "no CLR in target";
+            using var runtime = clr.CreateRuntime();
+
+            void DumpType(string tn)
+            {
+                var t = FindType(runtime, tn);
+                sb.AppendLine($"=== {tn} ===");
+                if (t == null) { sb.AppendLine("  (not found)"); return; }
+                sb.AppendLine($"  valueType={t.IsValueType} staticSize=0x{t.StaticSize:X} componentSize=0x{t.ComponentSize:X}");
+                foreach (var f in t.Fields)
+                    sb.AppendLine($"  +0x{f.Offset:X3} {f.Name,-26} {f.Type?.Name ?? "?"} (size 0x{f.Size:X}, prim={f.IsPrimitive}, objref={f.IsObjectReference})");
+            }
+
+            var reader = dt.DataReader;
+            string Hex(ulong addr, int n)
+            {
+                var b = new byte[n]; int got = reader.Read(addr, b);
+                return got <= 0 ? "(read failed)" : BitConverter.ToString(b, 0, got);
+            }
+            ClrType? TypeAt(ulong p) { try { return runtime.Heap.GetObjectType(p); } catch { return null; } }
+            void Follow(string label, ulong p, int depth)
+            {
+                if (p < 0x10000 || p > 0x7FFFFFFFFFFF) return;
+                var t = TypeAt(p);
+                if (t == null) { sb.AppendLine($"{label} 0x{p:X} -> (no type)"); return; }
+                if (t.IsArray)
+                {
+                    int len = 0; try { len = runtime.Heap.GetObject(p).AsArray().Length; } catch { }
+                    sb.AppendLine($"{label} 0x{p:X} -> {t.Name} len={len} compSize=0x{t.ComponentSize:X} elem={t.ComponentType?.Name} data=0x{p + 0x10:X} bytes[0..32]={Hex(p + 0x10, 32)}");
+                }
+                else
+                {
+                    sb.AppendLine($"{label} 0x{p:X} -> {t.Name} raw[0..48]={Hex(p, 48)}");
+                    if (depth > 0) // follow this object's pointer-like slots one more level
+                    {
+                        var b = new byte[48]; int got = reader.Read(p, b);
+                        for (int off = 8; off + 8 <= got; off += 8)
+                        {
+                            ulong q = BitConverter.ToUInt64(b, off);
+                            if (q >= 0x10000 && q < 0x7FFFFFFFFFFF) Follow($"    +{off}:", q, depth - 1);
+                        }
+                    }
+                }
+            }
+
+            // World dimensions (int statics on Main).
+            int W = 0, H = 0;
+            var mainT = FindType(runtime, "Terraria.Main");
+            int RD(string n)
+            {
+                var f = mainT?.GetStaticFieldByName(n);
+                if (f == null) return 0;
+                foreach (var d in runtime.AppDomains) { try { return f.Read<int>(d); } catch { } }
+                return 0;
+            }
+            W = RD("maxTilesX"); H = RD("maxTilesY");
+            sb.AppendLine($"maxTilesX={W} maxTilesY={H} product={(long)W * H}");
+
+            DumpType("Terraria.Tilemap");
+            DumpType("Terraria.Tile");
+            DumpType("Terraria.TileData");
+
+            // Raw Main.tile struct bytes + follow every pointer-like slot (ClrMD metadata can't be
+            // trusted here — tModLoader/MonoMod patch the type, so read the real memory).
+            var fTile = mainT?.GetStaticFieldByName("tile");
+            if (fTile != null)
+            {
+                foreach (var domain in runtime.AppDomains)
+                {
+                    ulong addr; try { addr = fTile.GetAddress(domain); } catch { continue; }
+                    if (addr == 0) continue;
+                    var raw = new byte[48]; int got = reader.Read(addr, raw);
+                    sb.AppendLine($"Main.tile @0x{addr:X} raw[{got}]={BitConverter.ToString(raw, 0, Math.Max(0, got))}");
+                    for (int off = 0; off + 8 <= got; off += 8)
+                    {
+                        ulong p = BitConverter.ToUInt64(raw, off);
+                        if (p >= 0x10000 && p < 0x7FFFFFFFFFFF) Follow($"  +{off} ptr", p, 1);
+                    }
+                    break;
+                }
+            }
+
+            // Heap scan: arrays plausibly holding tile data (per-column = len H or W, or flat = W*H,
+            // or near the tile count). Definitive way to locate the storage regardless of references.
+            sb.AppendLine("=== heap arrays (tile-sized) ===");
+            long prod = (long)W * H; int hits = 0;
+            try
+            {
+                foreach (var o in runtime.Heap.EnumerateObjects())
+                {
+                    if (hits >= 50) { sb.AppendLine("  …(capped)"); break; }
+                    ClrType? t = o.Type;
+                    if (t == null || !t.IsArray) continue;
+                    int len; try { len = o.AsArray().Length; } catch { continue; }
+                    bool tileSized = len == H || len == W || len == H + 1 || len == W + 1
+                        || (prod > 0 && Math.Abs(len - prod) < prod / 100)
+                        || (len > 1_000_000 && len < 60_000_000);
+                    if (!tileSized) continue;
+                    sb.AppendLine($"  0x{o.Address:X} {t.Name} len={len} compSize=0x{t.ComponentSize:X} elem={t.ComponentType?.Name}");
+                    hits++;
+                }
+            }
+            catch (Exception ex) { sb.AppendLine("  heap scan err: " + ex.Message); }
+        }
+        catch (Exception ex) { sb.AppendLine("DUMP ERROR: " + ex); }
+        return sb.ToString();
+    }
+
+    /// <summary>Locate the live <c>Terraria.TileTypeData[]</c> array (tModLoader's struct-of-arrays
+    /// tile-type storage) so it can be bulk-read via RPM. Returns the address of the first element
+    /// (object + 0x10), the element count, and the world dims. The array is ~40 MB so it lives on the
+    /// LOH and its address is stable until the world reloads. (0,…) if not found.</summary>
+    public static (ulong dataAddr, int len, int width, int height) FindTileTypeArray(int pid)
+    {
+        try
+        {
+            using var dt = DataTarget.CreateSnapshotAndAttach(pid);
+            var clr = dt.ClrVersions.FirstOrDefault();
+            if (clr == null) return (0, 0, 0, 0);
+            using var runtime = clr.CreateRuntime();
+
+            var mainT = FindType(runtime, "Terraria.Main");
+            int RD(string n)
+            {
+                var f = mainT?.GetStaticFieldByName(n);
+                if (f == null) return 0;
+                foreach (var d in runtime.AppDomains) { try { return f.Read<int>(d); } catch { } }
+                return 0;
+            }
+            int w = RD("maxTilesX"), h = RD("maxTilesY");
+            long want = (long)(w + 1) * (h + 1);
+
+            ulong best = 0; int bestLen = 0;
+            foreach (var o in runtime.Heap.EnumerateObjects())
+            {
+                var t = o.Type;
+                if (t == null || !t.IsArray || t.ComponentType?.Name != "Terraria.TileTypeData") continue;
+                int len; try { len = o.AsArray().Length; } catch { continue; }
+                // Prefer the array whose length matches (W+1)(H+1); else remember the largest.
+                if (want > 0 && len == want) { best = o.Address; bestLen = len; break; }
+                if (len > bestLen) { best = o.Address; bestLen = len; }
+            }
+            return best == 0 ? (0, 0, w, h) : (best + 0x10, bestLen, w, h);
+        }
+        catch { return (0, 0, 0, 0); }
+    }
+
     private static int OffsetOf(ClrType t, string name, int fallback)
     {
         var f = t.GetFieldByName(name);

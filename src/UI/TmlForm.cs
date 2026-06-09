@@ -52,6 +52,8 @@ public sealed class TmlForm : Form
     private readonly RareSpawnPatcher _rareSpawn;
     // Auto-aim cursor weapons at the nearest enemy / boss (runs in the high-freq writer loop).
     private readonly AimbotPatcher _aimbot;
+    // Renders a world overview highlighting Corruption / Crimson / Hallow (on-demand snapshot).
+    private readonly WorldMapScanner _mapScanner;
     private List<(int type, int stars, string name)> _rareNpcs = new();
     private int _rareSelType; // last-picked rare mob type (fallback for the toggle)
 
@@ -62,7 +64,12 @@ public sealed class TmlForm : Form
     private readonly DataGridView _grid = new();
     private readonly DataGridView _buffGrid = new(); // potions/buffs live in their own tab
     private readonly DataGridView _invGrid = new();
-    private TabPage _cheatsTab = null!, _potionsTab = null!, _invTab = null!;
+    private TabPage _cheatsTab = null!, _potionsTab = null!, _mapTab = null!, _invTab = null!;
+    // World Map tab: biome overview render + controls.
+    private readonly PictureBox _mapBox = new() { Dock = DockStyle.Fill, SizeMode = PictureBoxSizeMode.Zoom, BackColor = Color.FromArgb(30, 30, 40) };
+    private readonly Label _mapStatus = new() { Dock = DockStyle.Top, Height = 22, ForeColor = Color.DimGray, Text = "  Scan to render the world — Corruption = purple, Crimson = red, Hallow = pink, you = yellow." };
+    private readonly Button _btnScanMap = new() { Text = "Scan World", Width = 100, Height = 26 };
+    private readonly Button _btnRelocateMap = new() { Text = "Re-locate (after world change)", Width = 190, Height = 26 };
     private readonly TextBox _log = new() { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, BorderStyle = BorderStyle.None, BackColor = Color.FromArgb(245, 245, 245) };
     private readonly System.Windows.Forms.Timer _timer = new() { Interval = 350 };
 
@@ -81,10 +88,13 @@ public sealed class TmlForm : Form
         _spawnBoost = new SpawnBoostPatcher(_engine);
         _rareSpawn = new RareSpawnPatcher(_engine);
         _aimbot = new AimbotPatcher(_engine);
+        _mapScanner = new WorldMapScanner(_engine);
         _engine.Log += AppendLog;
         _btnAttach.Click += (_, _) => DoAttach();
         _btnRescan.Click += (_, _) => DoRescan();
         _btnDisableAll.Click += (_, _) => DisableAll();
+        _btnScanMap.Click += (_, _) => ScanMap(false);
+        _btnRelocateMap.Click += (_, _) => ScanMap(true);
         _search.TextChanged += (_, _) => RebuildGrid();
         _timer.Tick += (_, _) => Tick();
 
@@ -215,6 +225,16 @@ public sealed class TmlForm : Form
         _potionsTab.Controls.Add(buffNote);
         buffNote.BringToFront();
 
+        _mapTab = new TabPage("World Map");
+        var mapBar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 34, Padding = new Padding(6, 4, 0, 0) };
+        mapBar.Controls.Add(_btnScanMap);
+        mapBar.Controls.Add(_btnRelocateMap);
+        _mapTab.Controls.Add(_mapBox);
+        _mapTab.Controls.Add(_mapStatus);
+        _mapTab.Controls.Add(mapBar);
+        _mapStatus.BringToFront();
+        mapBar.BringToFront();
+
         _invTab = new TabPage("Inventory");
         _invGrid.Dock = DockStyle.Fill;
         var invNote = new Label
@@ -228,6 +248,7 @@ public sealed class TmlForm : Form
 
         _tabs.TabPages.Add(_cheatsTab);
         _tabs.TabPages.Add(_potionsTab);
+        _tabs.TabPages.Add(_mapTab);
         _tabs.TabPages.Add(_invTab);
 
         var split = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal };
@@ -895,6 +916,37 @@ public sealed class TmlForm : Form
         SaveConfig();
         AppendLog("Disabled all active cheats.");
     }
+
+    /// <summary>Scan + render the world biome map off the UI thread (locate + 40 MB read take a moment).</summary>
+    private void ScanMap(bool relocate)
+    {
+        if (!_engine.Attached) { _mapStatus.Text = "  Attach to the game (in a world) first."; return; }
+        _btnScanMap.Enabled = false; _btnRelocateMap.Enabled = false;
+        _mapStatus.Text = relocate ? "  Re-locating + scanning… (a few seconds)" : "  Scanning world… (a few seconds)";
+        new Thread(() =>
+        {
+            Bitmap? bmp = null; string status;
+            try
+            {
+                if (relocate) _mapScanner.Locate();
+                bmp = _mapScanner.Render(2000, 700);
+                status = _mapScanner.Status;
+            }
+            catch (Exception ex) { status = "scan failed: " + ex.Message; }
+            try
+            {
+                BeginInvoke(() =>
+                {
+                    if (bmp != null) { _mapBox.Image?.Dispose(); _mapBox.Image = bmp; }
+                    _mapStatus.Text = "  " + status;
+                    _btnScanMap.Enabled = true; _btnRelocateMap.Enabled = true;
+                });
+            }
+            catch { /* form closing */ }
+        })
+        { IsBackground = true, Name = "world-map-scan" }.Start();
+    }
+
 
     // ---- tick ----
 
