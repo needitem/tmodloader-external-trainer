@@ -31,6 +31,7 @@ public sealed class TmlForm : Form
     private string _lastScopedStatus = "";
     private string _lastSpawnStatus = "";
     private string _lastRareStatus = "";
+    private string _lastAimStatus = "";
     private int _rareLogTick;
     private TmlField? _fLife, _fLifeMax, _fMana, _fManaMax;
 
@@ -49,6 +50,8 @@ public sealed class TmlForm : Form
     private readonly SpawnBoostPatcher _spawnBoost;
     // Force every natural spawn to a chosen rare mob — also targets the MP server.
     private readonly RareSpawnPatcher _rareSpawn;
+    // Auto-aim cursor weapons at the nearest enemy / boss (runs in the high-freq writer loop).
+    private readonly AimbotPatcher _aimbot;
     private List<(int type, int stars, string name)> _rareNpcs = new();
     private int _rareSelType; // last-picked rare mob type (fallback for the toggle)
 
@@ -75,6 +78,7 @@ public sealed class TmlForm : Form
         _scopedDrop = new ScopedDropPatcher(_engine);
         _spawnBoost = new SpawnBoostPatcher(_engine);
         _rareSpawn = new RareSpawnPatcher(_engine);
+        _aimbot = new AimbotPatcher(_engine);
         _engine.Log += AppendLog;
         _btnAttach.Click += (_, _) => DoAttach();
         _btnRescan.Click += (_, _) => DoRescan();
@@ -128,13 +132,13 @@ public sealed class TmlForm : Form
         {
             while (_writerRun)
             {
-                bool active = _engine.Attached && HasActiveWrites();
+                bool active = _engine.Attached && (HasActiveWrites() || _aimbot.Enabled);
                 if (active && !hiRes) { timeBeginPeriod(1); hiRes = true; }
                 else if (!active && hiRes) { timeEndPeriod(1); hiRes = false; }
 
                 if (active)
                 {
-                    try { lock (_engine.Sync) AssertActiveWrites(); }
+                    try { lock (_engine.Sync) { AssertActiveWrites(); _aimbot.Tick(); } }
                     catch { /* transient (process gone, list swap) */ }
                 }
                 Thread.Sleep(active ? 5 : 33);
@@ -354,6 +358,7 @@ public sealed class TmlForm : Form
             _scopedDrop.Clear();
             _spawnBoost.Clear();
             _rareSpawn.Clear();
+            _aimbot.Clear();
             try { _rareNpcs = TmlDiscovery.EnumerateRareNpcs(_engine.Proc!.Id, 2); AppendLog($"Loaded {_rareNpcs.Count} rare mobs for the spawn picker."); } catch { _rareNpcs = new(); }
             CacheVitalFields();
             lock (_engine.Sync) LoadAndApplyConfig(); // restore previously-enabled cheats
@@ -547,6 +552,7 @@ public sealed class TmlForm : Form
         RowKind.ScopedDrop => "drop(me)",
         RowKind.SpawnBoost => "spawn",
         RowKind.RareSpawn => "rare▾",
+        RowKind.Aimbot => "aim",
         RowKind.BuffClear => "no-debuff",
         RowKind.InfAmmo => "ammo",
         RowKind.Vanity => "vanity",
@@ -685,6 +691,10 @@ public sealed class TmlForm : Form
                     AppendLog($"ON: {r.Desc} → {RareName(rt)} (every natural spawn becomes this; works on MP server)");
                 }
                 else { _rareSpawn.Disable(); AppendLog($"OFF: {r.Desc}"); }
+                break;
+            case RowKind.Aimbot:
+                ApplyAimbot();
+                AppendLog($"{(r.Active ? "ON" : "OFF")}: {r.Desc}" + (r.Active ? " (hold attack to auto-aim)" : ""));
                 break;
             case RowKind.BuffClear:
                 // the high-frequency writer removes the buff each tick while active.
@@ -837,6 +847,7 @@ public sealed class TmlForm : Form
             else if (r.Kind == RowKind.ScopedDrop) { _scopedDrop.Disable(); }
             else if (r.Kind == RowKind.SpawnBoost) { _spawnBoost.Disable(); }
             else if (r.Kind == RowKind.RareSpawn) { _rareSpawn.Disable(); }
+            else if (r.Kind == RowKind.Aimbot) { _aimbot.Disable(); }
         }
         foreach (DataGridViewRow gr in _grid.Rows)
             if (gr.Tag is CheatRow rr && rr.Kind != RowKind.GroupHeader)
@@ -881,6 +892,9 @@ public sealed class TmlForm : Form
             if (_rareSpawn.Enabled && (++_rareLogTick % 8 == 0) && _rareSpawn.Status != _lastRareStatus)
             { _lastRareStatus = _rareSpawn.Status; AppendLog($"[rare spawn] {_lastRareStatus}"); }
 
+            if (_aimbot.Enabled && _aimbot.Status != _lastAimStatus)
+            { _lastAimStatus = _aimbot.Status; AppendLog($"[aimbot] {_lastAimStatus}"); }
+
             // Fast-tools is asserted by the high-frequency writer (the held item is recomputed
             // every frame by Calamity, so a slow write loses). The slow tick re-snapshots
             // all tools so non-held ones are covered and disable can restore them.
@@ -924,6 +938,18 @@ public sealed class TmlForm : Form
         int max = maxOn && int.TryParse(maxR!.InjectValue, out var mv) ? mv : 5;       // vanilla maxSpawns
         _spawnBoost.SetValues(rate, max);
         _spawnBoost.Enable();
+    }
+
+    /// <summary>"Nearest enemy" and "Boss priority" are independent rows feeding one aimbot; boss
+    /// priority wins when on (falls back to nearest if no boss is alive).</summary>
+    private void ApplyAimbot()
+    {
+        var enemyR = _rows.FirstOrDefault(x => x.Kind == RowKind.Aimbot && x.PatchMethod == "enemy");
+        var bossR = _rows.FirstOrDefault(x => x.Kind == RowKind.Aimbot && x.PatchMethod == "boss");
+        bool enemyOn = enemyR?.Active ?? false, bossOn = bossR?.Active ?? false;
+        if (!enemyOn && !bossOn) { _aimbot.Disable(); return; }
+        _aimbot.SetPreferBoss(bossOn);
+        _aimbot.Enable();
     }
 
     private string RareName(int type)
@@ -1000,6 +1026,7 @@ public sealed class TmlForm : Form
         try { _scopedDrop.Disable(); } catch { }
         try { _spawnBoost.Disable(); } catch { } // restore vanilla spawn defaults on the target
         try { _rareSpawn.Disable(); } catch { }  // remove the NewNPC cave on the target
+        try { _aimbot.Disable(); } catch { }     // stop overriding the cursor
         lock (_engine.Sync) _engine.Dispose(); // restores any injected patches
         base.OnFormClosed(e);
     }

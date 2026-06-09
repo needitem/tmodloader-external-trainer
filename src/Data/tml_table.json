@@ -60,5 +60,8 @@
 
   { "group": "🐲 Spawning (rare mobs)", "desc": "Spawn Interval — lower = spawns faster (vanilla 600; works in MP)", "kind": "spawnboost", "method": "rate", "value": "8" },
   { "group": "🐲 Spawning (rare mobs)", "desc": "Max Enemies Near You — higher = more at once (vanilla ~5; works in MP)", "kind": "spawnboost", "method": "max", "value": "60" },
-  { "group": "🐲 Spawning (rare mobs)", "desc": "Force Rare Spawns — pick a mob; every natural spawn becomes it (dropdown, sorted by rarity; works in MP)", "kind": "rarespawn", "value": "0" }
+  { "group": "🐲 Spawning (rare mobs)", "desc": "Force Rare Spawns — pick a mob; every natural spawn becomes it (dropdown, sorted by rarity; works in MP)", "kind": "rarespawn", "value": "0" },
+
+  { "group": "🎯 Aimbot (weapons)", "desc": "Auto-Aim Nearest Enemy — any weapon (sword/gun/bow/staff) points at the closest enemy while you hold attack (pickaxes/axes/hammers ignored)", "kind": "aimbot", "method": "enemy" },
+  { "group": "🎯 Aimbot (weapons)", "desc": "Auto-Aim Boss Priority — aim the on-screen boss first (else nearest enemy) while you hold attack (pickaxes/axes/hammers ignored)", "kind": "aimbot", "method": "boss" }
 ]

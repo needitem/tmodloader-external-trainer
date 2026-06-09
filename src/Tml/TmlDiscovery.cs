@@ -129,7 +129,7 @@ public static class TmlDiscovery
         if (itemType != null)
         {
             foreach (var name in new[] { "type", "stack", "maxStack", "prefix", "netID", "favorited",
-                "useTime", "useAnimation", "useStyle", "pick", "axe", "hammer", "tileBoost", "reuseDelay", "accessory", "ammo" })
+                "useTime", "useAnimation", "useStyle", "pick", "axe", "hammer", "tileBoost", "reuseDelay", "accessory", "ammo", "damage" })
             {
                 var f = itemType.GetFieldByName(name);
                 if (f != null) model.ItemFields[name] = f.Offset + HeaderSize;
@@ -216,6 +216,33 @@ public static class TmlDiscovery
                     { ulong a = fPrefix.GetAddress(domain); if (a != 0) model.StaticPrefixNames = a; }
                 }
                 catch { /* try next domain */ }
+            }
+        }
+
+        // ---- aimbot: Main statics (npc array, cursor, screen) + NPC field offsets ----
+        var fNpc = mainType.GetStaticFieldByName("npc");
+        var fMouseX = mainType.GetStaticFieldByName("mouseX");
+        var fMouseY = mainType.GetStaticFieldByName("mouseY");
+        var fScreen = mainType.GetStaticFieldByName("screenPosition");
+        foreach (var domain in runtime.AppDomains)
+        {
+            try
+            {
+                if (fNpc != null && model.NpcArray == 0) { ulong a = fNpc.GetAddress(domain); if (a != 0) model.NpcArray = a; }
+                if (fMouseX != null && model.MouseXAddr == 0) { ulong a = fMouseX.GetAddress(domain); if (a != 0) model.MouseXAddr = a; }
+                if (fMouseY != null && model.MouseYAddr == 0) { ulong a = fMouseY.GetAddress(domain); if (a != 0) model.MouseYAddr = a; }
+                if (fScreen != null && model.ScreenPosition == 0) { ulong a = fScreen.GetAddress(domain); if (a != 0) model.ScreenPosition = a; }
+            }
+            catch { /* try next domain */ }
+        }
+        var npcType = FindType(runtime, "Terraria.NPC");
+        if (npcType != null)
+        {
+            foreach (var name in new[] { "active", "position", "width", "height",
+                "friendly", "townNPC", "boss", "life", "lifeMax", "damage", "dontTakeDamage", "type" })
+            {
+                var f = npcType.GetFieldByName(name);
+                if (f != null) model.NpcFields[name] = f.Offset + HeaderSize;
             }
         }
 

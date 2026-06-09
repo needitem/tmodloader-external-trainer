@@ -35,6 +35,17 @@ public sealed class TmlModel
     public List<TmlField> PlayerFields = new();
     public Dictionary<string, int> ItemFields = new();
 
+    // ---- aimbot: Main statics + NPC field offsets (0 / empty if not resolved) ----
+    public ulong NpcArray;        // &Main.npc (NPC[] ref)
+    public ulong MouseXAddr;      // &Main.mouseX (int, screen-space cursor)
+    public ulong MouseYAddr;      // &Main.mouseY (int, screen-space cursor)
+    public ulong ScreenPosition;  // &Main.screenPosition (Vector2 — world coord at screen top-left)
+    public Dictionary<string, int> NpcFields = new(); // active/position/width/height/friendly/boss/life/...
+    // Aiming uses the player->target world direction + the OS cursor, so only the NPC array and
+    // its position/active offsets are required (mouse/screen statics are no longer needed).
+    public bool AimbotReady => NpcArray != 0
+        && NpcFields.ContainsKey("position") && NpcFields.ContainsKey("active");
+
     // Real memory offsets (ClrMD offset + 8 header). Overwritten by discovery.
     public int BuffTypeOff = 0x100;
     public int BuffTimeOff = 0x108;
