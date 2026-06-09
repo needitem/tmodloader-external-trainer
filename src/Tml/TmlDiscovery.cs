@@ -224,6 +224,8 @@ public static class TmlDiscovery
         var fMouseX = mainType.GetStaticFieldByName("mouseX");
         var fMouseY = mainType.GetStaticFieldByName("mouseY");
         var fScreen = mainType.GetStaticFieldByName("screenPosition");
+        var fZoomT = mainType.GetStaticFieldByName("GameZoomTarget");   // float, settings zoom (fallback)
+        var fViewM = mainType.GetStaticFieldByName("GameViewMatrix");   // SpriteViewMatrix, the applied render zoom
         foreach (var domain in runtime.AppDomains)
         {
             try
@@ -232,9 +234,17 @@ public static class TmlDiscovery
                 if (fMouseX != null && model.MouseXAddr == 0) { ulong a = fMouseX.GetAddress(domain); if (a != 0) model.MouseXAddr = a; }
                 if (fMouseY != null && model.MouseYAddr == 0) { ulong a = fMouseY.GetAddress(domain); if (a != 0) model.MouseYAddr = a; }
                 if (fScreen != null && model.ScreenPosition == 0) { ulong a = fScreen.GetAddress(domain); if (a != 0) model.ScreenPosition = a; }
+                if (fZoomT != null && model.GameZoomTarget == 0) { ulong a = fZoomT.GetAddress(domain); if (a != 0) model.GameZoomTarget = a; }
+                if (fViewM != null && model.GameViewMatrix == 0) { ulong a = fViewM.GetAddress(domain); if (a != 0) model.GameViewMatrix = a; }
             }
             catch { /* try next domain */ }
         }
+        // Zoom field inside SpriteViewMatrix (the Vector2 the world is rendered with).
+        var svmType = fViewM?.Type ?? FindType(runtime, "Terraria.Graphics.SpriteViewMatrix");
+        var zoomF = svmType?.Fields.FirstOrDefault(f => f.Name != null
+            && f.Name.Contains("zoom", StringComparison.OrdinalIgnoreCase)
+            && (f.Type?.Name?.Contains("Vector2") ?? false));
+        if (zoomF != null) model.ViewZoomOff = zoomF.Offset + HeaderSize;
         var npcType = FindType(runtime, "Terraria.NPC");
         if (npcType != null)
         {

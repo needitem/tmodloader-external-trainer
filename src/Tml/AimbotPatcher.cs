@@ -25,15 +25,13 @@ public sealed class AimbotPatcher
     private volatile bool _preferBoss;
     private string _status = "off";
 
-    private long _lastScan;
-    private int _targetIndex = -1;
+    private int _targetIndex = -1;          // sticky: held until the enemy dies/despawns
     private const int MaxNpcs = 200;        // Terraria's Main.maxNPCs
-    private const int RescanMs = 60;        // re-pick target a few times/sec; track its motion between picks
     private const int ArrayData = 0x10;     // MethodTable(8) + length(8)
 
     // Cached offsets (resolved once per TmlModel; -1 = field absent).
     private TmlModel? _cachedModel;
-    private int _oCtrlUse, _oPos, _oWidth, _oHeight, _oSelItem, _invOff;   // Player
+    private int _oCtrlUse, _oPos, _oSelItem, _invOff;                      // Player
     private int _itPick, _itAxe, _itHammer, _itDamage;                     // held Item
     private int _nActive, _nPos, _nWidth, _nHeight, _nFriendly, _nTown, _nBoss, _nLife, _nDamage; // NPC
     private int _npcBlock;
@@ -71,39 +69,74 @@ public sealed class AimbotPatcher
         // aims where you point) and not blocks/tools/fishing rods.
         if (!HoldingAimableWeapon(m, pb)) { _status = "holding a tool/non-weapon (no aim)"; return; }
 
-        float px = m.ReadFloat((IntPtr)(pb.ToInt64() + _oPos)) + (_oWidth >= 0 ? m.ReadInt32((IntPtr)(pb.ToInt64() + _oWidth)) : 20) / 2f;
-        float py = m.ReadFloat((IntPtr)(pb.ToInt64() + _oPos + 4)) + (_oHeight >= 0 ? m.ReadInt32((IntPtr)(pb.ToInt64() + _oHeight)) : 42) / 2f;
-
-        long now = Environment.TickCount64;
-        if (_targetIndex < 0 || now - _lastScan >= RescanMs)
-        {
-            _targetIndex = PickTarget(m, model, px, py);
-            _lastScan = now;
-        }
-        if (_targetIndex < 0) { _status = "no target in range"; return; }
-
-        if (!TryNpcCenter(m, model, _targetIndex, out float tx, out float ty))
-        { _targetIndex = -1; _status = "target lost"; return; }
-
-        // Player→target direction in WORLD space (screen Y matches world Y: +down).
-        float dx = tx - px, dy = ty - py;
-        float len = MathF.Sqrt(dx * dx + dy * dy);
-        if (len < 1f) { _status = "target on player"; return; }
-        dx /= len; dy /= len;
-
         IntPtr hwnd = GameWindow();
         if (hwnd == IntPtr.Zero || !Native.GetClientRect(hwnd, out var rc)) { _status = "no game window"; return; }
         int w = rc.Right - rc.Left, h = rc.Bottom - rc.Top;
         if (w <= 0 || h <= 0) { _status = "no game window"; return; }
+        float zoom = ReadZoom(m, model);
 
-        float radius = Math.Min(w, h) * 0.35f;             // far enough to be unambiguous, inside the view
-        var pt = new Native.POINT
+        // Player center, used as BOTH the "nearest" origin and the aim anchor. We do NOT use
+        // Main.screenPosition: it's a value-type static on the MonoMod-patched Main, and ClrMD's
+        // GetAddress for those returns a bogus address (verified — same as Main.tile), so it reads
+        // garbage and flings the cursor to a corner. Terraria keeps the player ~centered on screen,
+        // so anchoring on the player gives correct aim without a (broken) world→screen transform.
+        float px = m.ReadFloat((IntPtr)(pb.ToInt64() + _oPos)) + 10f;
+        float py = m.ReadFloat((IntPtr)(pb.ToInt64() + _oPos + 4)) + 21f;
+
+        // On-screen test: the player is centered, so the visible area spans ±(view/2)/zoom in world
+        // units around the player. Only enemies whose center is inside that (+1 tile slack) count.
+        float hx = (w * 0.5f) / zoom + 16f, hy = (h * 0.5f) / zoom + 16f;
+        bool OnScreen(float cx, float cy) => Math.Abs(cx - px) <= hx && Math.Abs(cy - py) <= hy;
+
+        // Target stickiness: keep hammering the current enemy until it dies / despawns / leaves the
+        // screen, THEN switch to the next nearest on-screen one. (Re-picking every tick made the aim
+        // flit between similar-distance enemies.)
+        float tx, ty;
+        if (_targetIndex >= 0 && TryNpcCenter(m, model, _targetIndex, out tx, out ty) && OnScreen(tx, ty))
         {
-            X = Math.Clamp((int)(w / 2f + dx * radius), 0, w - 1),
-            Y = Math.Clamp((int)(h / 2f + dy * radius), 0, h - 1),
-        };
+            // current target still alive and on-screen → keep it
+        }
+        else
+        {
+            _targetIndex = PickTarget(m, model, px, py, hx, hy);
+            if (_targetIndex < 0 || !TryNpcCenter(m, model, _targetIndex, out tx, out ty))
+            { _targetIndex = -1; _status = "no on-screen target"; return; }
+        }
+
+        // Aim: the player sits at the screen center, so the target's client pixel is
+        // center + (target - player) * zoom (world units = screen px at zoom 1).
+        int cliX = (int)(w / 2f + (tx - px) * zoom);
+        int cliY = (int)(h / 2f + (ty - py) * zoom);
+
+        var pt = new Native.POINT { X = Math.Clamp(cliX, 0, w - 1), Y = Math.Clamp(cliY, 0, h - 1) };
         if (Native.ClientToScreen(hwnd, ref pt)) Native.SetCursorPos(pt.X, pt.Y);
-        _status = _preferBoss ? "aiming (boss priority)" : "aiming (nearest)";
+        _status = "aiming" + (_preferBoss ? " — boss" : "");
+    }
+
+    /// <summary>World render zoom (1.0 = default). Prefers the live SpriteViewMatrix zoom (what the
+    /// frame is actually drawn with, consistent with screenPosition); falls back to GameZoomTarget,
+    /// then 1.0. Clamped to a sane range so a bad read can't fling the cursor.</summary>
+    private static float ReadZoom(ProcessMemory m, TmlModel model)
+    {
+        try
+        {
+            if (model.GameViewMatrix != 0 && model.ViewZoomOff >= 0)
+            {
+                IntPtr vm = m.ReadPtr64((IntPtr)model.GameViewMatrix);
+                if (vm != IntPtr.Zero)
+                {
+                    float z = m.ReadFloat((IntPtr)(vm.ToInt64() + model.ViewZoomOff));
+                    if (z >= 0.1f && z <= 10f) return z;
+                }
+            }
+            if (model.GameZoomTarget != 0)
+            {
+                float z = m.ReadFloat((IntPtr)model.GameZoomTarget);
+                if (z >= 0.1f && z <= 10f) return z;
+            }
+        }
+        catch { }
+        return 1f;
     }
 
     /// <summary>Resolve + cache Player/NPC field offsets once per model. Returns false if the
@@ -116,7 +149,7 @@ public sealed class AimbotPatcher
             int P(string n) { var f = model.PlayerFields.FirstOrDefault(x => x.Name == n); return f?.Offset ?? -1; }
             int N(string n) => model.NpcFields.TryGetValue(n, out var o) ? o : -1;
             int I(string n) => model.ItemFields.TryGetValue(n, out var o) ? o : -1;
-            _oCtrlUse = P("controlUseItem"); _oPos = P("position"); _oWidth = P("width"); _oHeight = P("height");
+            _oCtrlUse = P("controlUseItem"); _oPos = P("position");
             _oSelItem = P("selectedItem"); _invOff = model.InventoryOff;
             _itPick = I("pick"); _itAxe = I("axe"); _itHammer = I("hammer"); _itDamage = I("damage");
             _nActive = N("active"); _nPos = N("position"); _nWidth = N("width"); _nHeight = N("height");
@@ -158,8 +191,9 @@ public sealed class AimbotPatcher
     private int BI(int off) => off >= 0 ? BitConverter.ToInt32(_npcBuf, off) : 0;
     private float BF(int off) => off >= 0 ? BitConverter.ToSingle(_npcBuf, off) : 0f;
 
-    /// <summary>Scan Main.npc[] for the closest valid hostile (and closest boss); return the slot index.</summary>
-    private int PickTarget(ProcessMemory m, TmlModel model, float px, float py)
+    /// <summary>Scan Main.npc[] for the closest valid on-screen hostile (and closest boss); slot index.
+    /// hx/hy are the visible half-extents in world px around the player (off-screen enemies skipped).</summary>
+    private int PickTarget(ProcessMemory m, TmlModel model, float px, float py, float hx, float hy)
     {
         IntPtr arr = m.ReadPtr64((IntPtr)model.NpcArray);
         if (arr == IntPtr.Zero) return -1;
@@ -176,12 +210,15 @@ public sealed class AimbotPatcher
             long npc = BitConverter.ToInt64(ptrs, i * 8);
             if (npc == 0 || !m.ReadBytes((IntPtr)npc, _npcBuf)) continue;   // one block read per slot
             if (!BB(_nActive)) continue;
-            if (BB(_nFriendly) || BB(_nTown)) continue;
+            if (BB(_nFriendly) || BB(_nTown)) continue;                     // skip friendlies / town NPCs
             if (BI(_nLife) <= 0) continue;
             bool boss = BB(_nBoss);
-            if (!boss && BI(_nDamage) <= 0) continue;                       // skip critters / harmless NPCs
+            // (No damage>0 filter: that field's offset can be wrong on the patched type and would
+            //  wrongly drop real enemies — better to occasionally target a critter than miss a mob.)
             float cx = BF(_nPos) + BI(_nWidth) / 2f, cy = BF(_nPos + 4) + BI(_nHeight) / 2f;
-            float dx = cx - px, dy = cy - py, d = dx * dx + dy * dy;
+            float dx = cx - px, dy = cy - py;
+            if (Math.Abs(dx) > hx || Math.Abs(dy) > hy) continue;           // off-screen → ignore
+            float d = dx * dx + dy * dy;
             if (d < bestD) { bestD = d; best = i; }
             if (boss && d < bestBossD) { bestBossD = d; bestBoss = i; }
         }

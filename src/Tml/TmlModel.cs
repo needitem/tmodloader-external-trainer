@@ -40,6 +40,9 @@ public sealed class TmlModel
     public ulong MouseXAddr;      // &Main.mouseX (int, screen-space cursor)
     public ulong MouseYAddr;      // &Main.mouseY (int, screen-space cursor)
     public ulong ScreenPosition;  // &Main.screenPosition (Vector2 — world coord at screen top-left)
+    public ulong GameViewMatrix;  // &Main.GameViewMatrix (SpriteViewMatrix ref — applied render zoom)
+    public ulong GameZoomTarget;  // &Main.GameZoomTarget (float — settings zoom, fallback)
+    public int ViewZoomOff = -1;  // SpriteViewMatrix zoom (Vector2) field offset
     public Dictionary<string, int> NpcFields = new(); // active/position/width/height/friendly/boss/life/...
     // Aiming uses the player->target world direction + the OS cursor, so only the NPC array and
     // its position/active offsets are required (mouse/screen statics are no longer needed).
