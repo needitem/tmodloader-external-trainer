@@ -35,7 +35,8 @@ public sealed class TmlForm : Form
     private TmlField? _fLife, _fLifeMax, _fMana, _fManaMax;
 
     // High-frequency writer: per-frame-recomputed values (move/mine speed) must be written
-    // far faster than the 350ms UI tick to actually hold. ~2ms with 1ms timer resolution.
+    // far faster than the 350ms UI tick to actually hold. Runs hot (~5ms, 1ms timer res) only
+    // while a write-cheat is active; idles at ~30Hz with the high-res timer released otherwise.
     private Thread? _writer;
     private volatile bool _writerRun = true;
 
@@ -112,24 +113,50 @@ public sealed class TmlForm : Form
     private static byte[] RetFloat(float v) { var c = new byte[] { 0xB8, 0, 0, 0, 0, 0x66, 0x0F, 0x6E, 0xC0, 0xC3 }; BitConverter.GetBytes(v).CopyTo(c, 1); return c; }
     private static byte[] RetInt(int v) { var c = new byte[] { 0xB8, 0, 0, 0, 0, 0xC3 }; BitConverter.GetBytes(v).CopyTo(c, 1); return c; } // mov eax,imm32; ret
 
-    /// <summary>Continuously asserts active cheats at ~2ms so per-frame-recomputed values hold.</summary>
+    /// <summary>
+    /// Asserts active cheats fast enough that per-frame-recomputed values (move/mine speed, etc.)
+    /// hold. Only runs hot — and only raises the global 1ms timer resolution — while at least one
+    /// write-cheat is active; otherwise it idles at ~30Hz and releases the high-res timer,
+    /// so an attached-but-idle trainer no longer pins the system timer (a classic game-stutter cause).
+    /// 5ms ⇒ ~3 writes/frame at 60fps (≥1/frame even at 144fps), still reliably winning the per-frame
+    /// recompute race while cutting the cross-process write/syscall rate ~2.5× versus the old 2ms spin.
+    /// </summary>
     private void WriterLoop()
     {
-        timeBeginPeriod(1);
+        bool hiRes = false;
         try
         {
             while (_writerRun)
             {
-                try
+                bool active = _engine.Attached && HasActiveWrites();
+                if (active && !hiRes) { timeBeginPeriod(1); hiRes = true; }
+                else if (!active && hiRes) { timeEndPeriod(1); hiRes = false; }
+
+                if (active)
                 {
-                    if (_engine.Attached)
-                        lock (_engine.Sync) AssertActiveWrites();
+                    try { lock (_engine.Sync) AssertActiveWrites(); }
+                    catch { /* transient (process gone, list swap) */ }
                 }
-                catch { /* transient (process gone, list swap) */ }
-                Thread.Sleep(2);
+                Thread.Sleep(active ? 5 : 33);
             }
         }
-        finally { timeEndPeriod(1); }
+        finally { if (hiRes) timeEndPeriod(1); }
+    }
+
+    // Kinds the writer thread re-asserts each tick; used to decide whether to run hot.
+    private static readonly RowKind[] WriterKinds =
+    {
+        RowKind.Value, RowKind.Toggle, RowKind.Inject, RowKind.Fast,
+        RowKind.Tools, RowKind.Craft, RowKind.BuffClear, RowKind.InfAmmo,
+    };
+
+    /// <summary>True if any write-cheat is toggled on (cheap snapshot check, no memory access).</summary>
+    private bool HasActiveWrites()
+    {
+        var rows = _rows; // snapshot reference (rebuilds swap the field, never mutate in place)
+        foreach (var r in rows)
+            if (r.Active && Array.IndexOf(WriterKinds, r.Kind) >= 0) return true;
+        return false;
     }
 
     private void AssertActiveWrites()
