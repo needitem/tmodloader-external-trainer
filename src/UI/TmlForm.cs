@@ -60,7 +60,9 @@ public sealed class TmlForm : Form
 
     private readonly TabControl _tabs = new() { Dock = DockStyle.Fill };
     private readonly DataGridView _grid = new();
+    private readonly DataGridView _buffGrid = new(); // potions/buffs live in their own tab
     private readonly DataGridView _invGrid = new();
+    private TabPage _cheatsTab = null!, _potionsTab = null!, _invTab = null!;
     private readonly TextBox _log = new() { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, BorderStyle = BorderStyle.None, BackColor = Color.FromArgb(245, 245, 245) };
     private readonly System.Windows.Forms.Timer _timer = new() { Interval = 350 };
 
@@ -120,7 +122,7 @@ public sealed class TmlForm : Form
     /// <summary>
     /// Asserts active cheats fast enough that per-frame-recomputed values (move/mine speed, etc.)
     /// hold. Only runs hot — and only raises the global 1ms timer resolution — while at least one
-    /// write-cheat is active; otherwise it idles at ~30Hz and releases the high-res timer,
+    /// write-cheat is actually active; otherwise it idles at ~30Hz and releases the high-res timer,
     /// so an attached-but-idle trainer no longer pins the system timer (a classic game-stutter cause).
     /// 5ms ⇒ ~3 writes/frame at 60fps (≥1/frame even at 144fps), still reliably winning the per-frame
     /// recompute race while cutting the cross-process write/syscall rate ~2.5× versus the old 2ms spin.
@@ -198,23 +200,35 @@ public sealed class TmlForm : Form
         bar.Controls.Add(_search);
         bar.Controls.Add(_btnDisableAll);
 
-        var cheatsTab = new TabPage("Cheats");
+        _cheatsTab = new TabPage("Cheats");
         _grid.Dock = DockStyle.Fill;
-        cheatsTab.Controls.Add(_grid);
+        _cheatsTab.Controls.Add(_grid);
 
-        var invTab = new TabPage("Inventory");
+        _potionsTab = new TabPage("Potions");
+        _buffGrid.Dock = DockStyle.Fill;
+        var buffNote = new Label
+        {
+            Dock = DockStyle.Top, Height = 22, ForeColor = Color.DimGray,
+            Text = "  Potion/buff effects — tick On to keep the buff applied (the game re-applies it each frame). Use the Find box above to filter.",
+        };
+        _potionsTab.Controls.Add(_buffGrid);
+        _potionsTab.Controls.Add(buffNote);
+        buffNote.BringToFront();
+
+        _invTab = new TabPage("Inventory");
         _invGrid.Dock = DockStyle.Fill;
         var invNote = new Label
         {
             Dock = DockStyle.Top, Height = 22, ForeColor = Color.DimGray,
             Text = "  Item = name · Count = quantity (double-click to edit) · Modifier = prefix · ID/Pfx# = raw numbers. Changing ID may need a world reload.",
         };
-        invTab.Controls.Add(_invGrid);
-        invTab.Controls.Add(invNote);
+        _invTab.Controls.Add(_invGrid);
+        _invTab.Controls.Add(invNote);
         invNote.BringToFront();
 
-        _tabs.TabPages.Add(cheatsTab);
-        _tabs.TabPages.Add(invTab);
+        _tabs.TabPages.Add(_cheatsTab);
+        _tabs.TabPages.Add(_potionsTab);
+        _tabs.TabPages.Add(_invTab);
 
         var split = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal };
         split.Panel1.Controls.Add(_tabs);
@@ -231,24 +245,7 @@ public sealed class TmlForm : Form
 
     private void BuildGrid()
     {
-        _grid.AutoGenerateColumns = false;
-        _grid.AllowUserToAddRows = false;
-        _grid.AllowUserToResizeRows = false;
-        _grid.RowHeadersVisible = false;
-        _grid.MultiSelect = false;
-        _grid.SelectionMode = DataGridViewSelectionMode.CellSelect;
-        _grid.EditMode = DataGridViewEditMode.EditProgrammatically;
-        _grid.BackgroundColor = Color.White;
-        _grid.BorderStyle = BorderStyle.None;
-        _grid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
-        _grid.EnableHeadersVisualStyles = false;
-
-        _grid.Columns.Add(new DataGridViewCheckBoxColumn { HeaderText = "On", Name = "active", Width = 42 });
-        _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Description", Name = "desc", ReadOnly = true, Width = 380, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill });
-        _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Type", Name = "type", ReadOnly = true, Width = 60 });
-        _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Value", Name = "value", Width = 150 });
-
-        _grid.CellClick += Grid_CellClick;
+        ConfigureRowGrid(_grid);
         _grid.CellDoubleClick += Grid_CellDoubleClick;
         _grid.CellEndEdit += Grid_CellEndEdit;
         // commit combo-box (rare-spawn picker) selections immediately
@@ -259,7 +256,33 @@ public sealed class TmlForm : Form
         // mismatches as a modal dialog. Suppress it — the combo still works correctly.
         _grid.DataError += (_, e) => { e.ThrowException = false; e.Cancel = true; };
 
+        // Potions grid: simple On-toggles only, so it just needs the click handler.
+        ConfigureRowGrid(_buffGrid);
+
         BuildInvGrid();
+    }
+
+    /// <summary>Shared column layout + toggle handler for the Cheats and Potions grids.</summary>
+    private void ConfigureRowGrid(DataGridView g)
+    {
+        g.AutoGenerateColumns = false;
+        g.AllowUserToAddRows = false;
+        g.AllowUserToResizeRows = false;
+        g.RowHeadersVisible = false;
+        g.MultiSelect = false;
+        g.SelectionMode = DataGridViewSelectionMode.CellSelect;
+        g.EditMode = DataGridViewEditMode.EditProgrammatically;
+        g.BackgroundColor = Color.White;
+        g.BorderStyle = BorderStyle.None;
+        g.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
+        g.EnableHeadersVisualStyles = false;
+
+        g.Columns.Add(new DataGridViewCheckBoxColumn { HeaderText = "On", Name = "active", Width = 42 });
+        g.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Description", Name = "desc", ReadOnly = true, Width = 380, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill });
+        g.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Type", Name = "type", ReadOnly = true, Width = 60 });
+        g.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Value", Name = "value", Width = 150 });
+
+        g.CellClick += Grid_CellClick;
     }
 
     private void BuildInvGrid()
@@ -487,15 +510,31 @@ public sealed class TmlForm : Form
     }
     private bool _building;
 
+    /// <summary>Groups that hold buff/potion rows (rendered in the Potions tab, not the Cheats tab).</summary>
+    private HashSet<string> BuffGroups() =>
+        _rows.Where(r => r.Kind == RowKind.Buff).Select(r => r.Group).ToHashSet();
+
     private void RebuildGrid()
     {
+        var buffGroups = BuffGroups();
+        bool IsBuffRow(CheatRow r) =>
+            r.Kind == RowKind.Buff || (r.Kind == RowKind.GroupHeader && buffGroups.Contains(r.Group));
+
+        var visible = Filtered().ToList();
         _building = true;
-        _grid.SuspendLayout();
-        _grid.Rows.Clear();
-        foreach (var r in Filtered())
+        PopulateGrid(_grid, visible.Where(r => !IsBuffRow(r)));
+        PopulateGrid(_buffGrid, visible.Where(IsBuffRow));
+        _building = false;
+    }
+
+    private void PopulateGrid(DataGridView grid, IEnumerable<CheatRow> rows)
+    {
+        grid.SuspendLayout();
+        grid.Rows.Clear();
+        foreach (var r in rows)
         {
-            int i = _grid.Rows.Add();
-            var row = _grid.Rows[i];
+            int i = grid.Rows.Add();
+            var row = grid.Rows[i];
             row.Tag = r;
             if (r.Kind == RowKind.GroupHeader)
             {
@@ -531,8 +570,7 @@ public sealed class TmlForm : Form
                 row.Cells["value"].ReadOnly = r.Kind is not (RowKind.Value or RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost);
             }
         }
-        _grid.ResumeLayout();
-        _building = false;
+        grid.ResumeLayout();
     }
 
     private static string TypeLabel(CheatRow r) => r.Kind switch
@@ -571,10 +609,11 @@ public sealed class TmlForm : Form
     private void Grid_CellClick(object? sender, DataGridViewCellEventArgs e)
     {
         if (e.RowIndex < 0) return;
-        var grow = _grid.Rows[e.RowIndex];
+        var g = sender as DataGridView ?? _grid;
+        var grow = g.Rows[e.RowIndex];
         if (grow.Tag is not CheatRow r || r.Kind == RowKind.GroupHeader) return;
-        if (r.Kind == RowKind.RareSpawn && _grid.Columns[e.ColumnIndex].Name == "value") { OpenRarePicker(r, grow); return; }
-        if (_grid.Columns[e.ColumnIndex].Name != "active") return;
+        if (r.Kind == RowKind.RareSpawn && g.Columns[e.ColumnIndex].Name == "value") { OpenRarePicker(r, grow); return; }
+        if (g.Columns[e.ColumnIndex].Name != "active") return;
         if (!_engine.Attached) { AppendLog("Attach first."); if (grow != null) grow.Cells["active"].Value = false; return; }
 
         if (r.Kind == RowKind.Action) { DoAction(r); if (grow != null) grow.Cells["active"].Value = false; return; }
@@ -849,9 +888,10 @@ public sealed class TmlForm : Form
             else if (r.Kind == RowKind.RareSpawn) { _rareSpawn.Disable(); }
             else if (r.Kind == RowKind.Aimbot) { _aimbot.Disable(); }
         }
-        foreach (DataGridViewRow gr in _grid.Rows)
-            if (gr.Tag is CheatRow rr && rr.Kind != RowKind.GroupHeader)
-                gr.Cells["active"].Value = false;
+        foreach (var g in new[] { _grid, _buffGrid })
+            foreach (DataGridViewRow gr in g.Rows)
+                if (gr.Tag is CheatRow rr && rr.Kind != RowKind.GroupHeader)
+                    gr.Cells["active"].Value = false;
         SaveConfig();
         AppendLog("Disabled all active cheats.");
     }
@@ -902,11 +942,13 @@ public sealed class TmlForm : Form
                 if (r.Kind == RowKind.Tools && r.Active)
                     _engine.ApplyFastTools(int.TryParse(r.InjectValue, out var t) ? t : 1, 4);
 
-            if (_tabs.SelectedIndex == 1) { RefreshInvGrid(); return; }
-            if (_tabs.SelectedIndex != 0) return;
+            var sel = _tabs.SelectedTab;
+            if (sel == _invTab) { RefreshInvGrid(); return; }
+            var grid = sel == _potionsTab ? _buffGrid : sel == _cheatsTab ? _grid : null;
+            if (grid == null) return;
 
-            var editing = _grid.IsCurrentCellInEditMode ? _grid.CurrentCell : null;
-            foreach (DataGridViewRow gr in _grid.Rows)
+            var editing = grid.IsCurrentCellInEditMode ? grid.CurrentCell : null;
+            foreach (DataGridViewRow gr in grid.Rows)
             {
                 if (gr.Tag is not CheatRow r || r.Kind is RowKind.GroupHeader or RowKind.Action) continue;
                 var cell = gr.Cells["value"];
