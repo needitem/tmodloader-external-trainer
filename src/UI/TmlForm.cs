@@ -33,6 +33,7 @@ public sealed class TmlForm : Form
     private string _lastRareStatus = "";
     private string _lastAimStatus = "";
     private int _rareLogTick;
+    private long _stickyFastUntilMs; // re-resolve patches fast for ~30s after any change, then back off
     private TmlField? _fLife, _fLifeMax, _fMana, _fManaMax;
 
     // High-frequency writer: per-frame-recomputed values (move/mine speed) must be written
@@ -118,7 +119,12 @@ public sealed class TmlForm : Form
             try { if (_scopedDrop.Enabled) _scopedDrop.Tick(); } catch { }
             try { if (_spawnBoost.Enabled) _spawnBoost.Tick(); } catch { }
             try { if (_rareSpawn.Enabled) _rareSpawn.Tick(); } catch { }
-            Thread.Sleep(_sticky.AnyActive || _scopedDrop.Enabled || _spawnBoost.Enabled || _rareSpawn.Enabled ? 2500 : 1000);
+            // Tiered-JIT relocations only happen while a method warms up (first seconds of use), so we
+            // only need the costly ClrMD snapshots frequently right after a toggle; once settled, back
+            // off to cut steady-state snapshot churn (each one forks the target process).
+            bool active = _sticky.AnyActive || _scopedDrop.Enabled || _spawnBoost.Enabled || _rareSpawn.Enabled;
+            bool fast = Environment.TickCount64 < _stickyFastUntilMs || (_rareSpawn.Enabled && !_rareSpawn.ScopeLocked);
+            Thread.Sleep(!active ? 1000 : fast ? 2500 : 6000);
         }
     }
 
@@ -648,6 +654,7 @@ public sealed class TmlForm : Form
 
     private void ApplyActiveChange(CheatRow r, DataGridViewRow? grow)
     {
+        _stickyFastUntilMs = Environment.TickCount64 + 30_000; // a toggle may need fast re-resolve while it warms up
         switch (r.Kind)
         {
             case RowKind.Value:

@@ -39,6 +39,8 @@ public sealed class RareSpawnPatcher
 
     public bool Enabled => _enabled;
     public string Status { get { lock (_lock) return _status; } }
+    /// <summary>True once the spawner range is found; until then the GUI keeps the discovery loop fast.</summary>
+    public bool ScopeLocked { get { lock (_lock) return _scopeLo != 0; } }
 
     public void SetType(int type) { lock (_lock) { _type = type; if (_mem != null && _cfg != IntPtr.Zero) try { _mem.WriteInt32((IntPtr)(_cfg.ToInt64() + 4), _type); } catch { } } }
 
@@ -94,14 +96,15 @@ public sealed class RareSpawnPatcher
         // Auto-discover the REAL spawner: resolve the last observed NewNPC caller. NewNPC has many
         // callers (bosses, mods); we only lock the scope onto vanilla NPC.SpawnNPC — which tModLoader
         // runs as a MonoMod dynamic method, so a name lookup misses it but the live caller IP finds it.
-        ulong lastRet = 0;
-        try { lastRet = (ulong)_mem.ReadInt64((IntPtr)(_cfg.ToInt64() + 16)); } catch { }
-        if (lastRet != 0)
+        // Once locked, stop probing — MethodInfoAt is a full ClrMD snapshot, wasteful to repeat forever.
+        if (_scopeLo == 0)
         {
-            var (nm, code, size) = TmlDiscovery.MethodInfoAt(_targetPid, lastRet);
-            if (code != 0 && size != 0 && (nm.Contains("NPC::SpawnNPC") || nm.Contains(".NPC.SpawnNPC")))
+            ulong lastRet = 0;
+            try { lastRet = (ulong)_mem.ReadInt64((IntPtr)(_cfg.ToInt64() + 16)); } catch { }
+            if (lastRet != 0)
             {
-                if (code != _scopeLo || code + size != _scopeHi)
+                var (nm, code, size) = TmlDiscovery.MethodInfoAt(_targetPid, lastRet);
+                if (code != 0 && size != 0 && (nm.Contains("NPC::SpawnNPC") || nm.Contains(".NPC.SpawnNPC")))
                 { _scopeLo = code; _scopeHi = code + size; _scopeName = nm; reinstall = true; }
             }
         }

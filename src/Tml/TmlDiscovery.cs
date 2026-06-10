@@ -353,26 +353,6 @@ public static class TmlDiscovery
         return result;
     }
 
-    /// <summary>Resolve a method's hot AND cold native code regions (for caller-range checks). A huge
-    /// method like NPC.SpawnNPC can be split, and the NewNPC call may live in the cold fragment.</summary>
-    public static (ulong hotAddr, ulong hotSize, ulong coldAddr, ulong coldSize) ResolveMethodRegions(int pid, string typeName, string method)
-    {
-        using var dt = DataTarget.CreateSnapshotAndAttach(pid);
-        var clr = dt.ClrVersions.FirstOrDefault();
-        if (clr == null) return (0, 0, 0, 0);
-        using var runtime = clr.CreateRuntime();
-        var t = FindType(runtime, typeName);
-        if (t == null) return (0, 0, 0, 0);
-        foreach (var m in t.Methods)
-        {
-            if (m.Name != method || m.NativeCode == 0) continue;
-            ulong ha = m.NativeCode, hs = 0, ca = 0, cs = 0;
-            try { var h = m.HotColdInfo; hs = h.HotSize; ca = h.ColdStart; cs = h.ColdSize; } catch { }
-            return (ha, hs, ca, cs);
-        }
-        return (0, 0, 0, 0);
-    }
-
     /// <summary>Find the method containing an instruction pointer, with its native code range. Resolves the
     /// REAL executing method — including MonoMod-generated dynamic copies of detoured vanilla methods
     /// (tModLoader patches NPC.SpawnNPC into a "(dynamicClass).NPC::SpawnNPC>" method) which a name lookup
@@ -392,32 +372,6 @@ public static class TmlDiscovery
             return ($"{m.Type?.Name}.{m.Name}", m.NativeCode, size);
         }
         catch { return ("?", 0, 0); }
-    }
-
-    /// <summary>Resolve the type name for a runtime MethodTable pointer (to identify a captured source object).</summary>
-    public static string TypeNameByMethodTable(int pid, ulong mt)
-    {
-        if (mt == 0) return "";
-        try
-        {
-            using var dt = DataTarget.CreateSnapshotAndAttach(pid);
-            var clr = dt.ClrVersions.FirstOrDefault();
-            if (clr == null) return "?";
-            using var runtime = clr.CreateRuntime();
-            var t = runtime.GetTypeByMethodTable(mt);
-            return t?.Name ?? "<unknown>";
-        }
-        catch { return "?"; }
-    }
-
-    /// <summary>Resolve a type's MethodTable pointer (object[+0x00] holds it; used to identify a runtime type).</summary>
-    public static ulong ResolveTypeMethodTable(int pid, string typeName)
-    {
-        using var dt = DataTarget.CreateSnapshotAndAttach(pid);
-        var clr = dt.ClrVersions.FirstOrDefault();
-        if (clr == null) return 0;
-        using var runtime = clr.CreateRuntime();
-        return FindType(runtime, typeName)?.MethodTable ?? 0;
     }
 
     /// <summary>Enumerate naturally-spawning enemies (boss/town/friendly excluded) with bestiary rarity stars,
