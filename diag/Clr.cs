@@ -572,8 +572,15 @@ internal static class ClrDiscovery
         if (fNpc != null) foreach (var d in runtime.AppDomains) { try { var o = fNpc.ReadObject(d); if (o.IsValid) { arr = o; break; } } catch { } }
         if (!arr.IsValid) { Console.WriteLine("Main.npc not found"); return; }
         var a = arr.AsArray();
+        // role names via Lang._npcNameCache
+        var lang = FindType(runtime, "Terraria.Lang");
+        var fNames = lang?.GetStaticFieldByName("_npcNameCache");
+        ClrObject namesObj = default;
+        if (fNames != null) foreach (var d in runtime.AppDomains) { try { var o = fNames.ReadObject(d); if (o.IsValid) { namesObj = o; break; } } catch { } }
+        bool haveNames = namesObj.IsValid; var names = haveNames ? namesObj.AsArray() : default;
+        string Role(int t) { try { if (haveNames && t >= 0 && t < names.Length) { var lt = names.GetObjectValue(t); if (lt.IsValid) return lt.ReadStringField("_value") ?? ""; } } catch { } return ""; }
         int active = 0;
-        Console.WriteLine("Active NPCs (type | active/friendly/townNPC/boss | name):");
+        Console.WriteLine("Active NPCs (type | flags | role | given):");
         for (int i = 0; i < a.Length; i++)
         {
             var npc = a.GetObjectValue(i);
@@ -583,8 +590,7 @@ internal static class ClrDiscovery
             int type = 0; bool fr = false, town = false, boss = false;
             try { type = npc.ReadField<int>("type"); fr = npc.ReadField<bool>("friendly"); town = npc.ReadField<bool>("townNPC"); boss = npc.ReadField<bool>("boss"); } catch { }
             string nm = ""; try { nm = npc.ReadStringField("_givenName") ?? ""; } catch { }
-            string full = ""; try { full = npc.ReadStringField("_fullName") ?? ""; } catch { }
-            Console.WriteLine($"  type {type,-5} {(fr ? "F" : "-")}{(town ? "T" : "-")}{(boss ? "B" : "-")}  given='{nm}' full='{full}'");
+            Console.WriteLine($"  type {type,-5} {(fr ? "F" : "-")}{(town ? "T" : "-")}{(boss ? "B" : "-")}  {Role(type),-16} given='{nm}'");
             active++;
         }
         Console.WriteLine($"total active: {active}");

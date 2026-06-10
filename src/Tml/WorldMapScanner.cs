@@ -33,15 +33,16 @@ public sealed class WorldMapScanner
     private static readonly HashSet<ushort> Crimson = new() { 199, 200, 203, 234, 352, 399, 401, 662 };
     private static readonly HashSet<ushort> Hallow = new() { 109, 110, 115, 116, 117, 164, 402, 403 };
 
-    // Rescuable "bound" NPC types (vanilla) — found tied up in the world, freed into town NPCs.
+    // Rescuable "bound" NPC types (vanilla) — found tied up / waiting in the world, freed into town NPCs.
     private static readonly HashSet<int> BoundNpcs = new()
     {
+        37,  // Old Man (dungeon) -> Clothier (after Skeletron)
         105, // Bound Goblin -> Goblin Tinkerer
         106, // Bound Wizard
         123, // Bound Mechanic
-        140, // Webbed Stylist
+        140, // Webbed Stylist -> Stylist (spider caves)
         354, // Bartender (unconscious) -> Tavernkeep
-        587, // Bound Golfer
+        587, // Bound Golfer -> Golfer
         250, // Tortured Soul -> Tax Collector
     };
 
