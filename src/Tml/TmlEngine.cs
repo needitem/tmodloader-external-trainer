@@ -88,6 +88,8 @@ public sealed class TmlEngine : IDisposable
     // The player pointer is resolved (3 reads) at most once per ~40 ms and cached, so a
     // full grid refresh (100+ field reads in one tick) pays the resolution cost only once.
     private IntPtr _player;
+    private IntPtr _inv;
+    private long _invStamp;
     // 0 = no cached value yet. (Avoid long.MinValue: `now - long.MinValue` overflows.)
     private long _playerStamp;
     private const long PlayerTtlMs = 40;
@@ -104,6 +106,19 @@ public sealed class TmlEngine : IDisposable
         _player = ResolvePlayer();
         _playerStamp = now == 0 ? 1 : now; // never store the 0 sentinel
         return _player;
+    }
+
+    /// <summary>Live inventory-array address, cached against the same generation as <see cref="PlayerBase"/>
+    /// (it moves only when the player object does). Saves the redundant pointer-chase that inventory
+    /// reads/writes otherwise repeat — the grid refresh alone did it hundreds of times per tick.</summary>
+    public IntPtr InventoryBase()
+    {
+        var pb = PlayerBase();
+        if (pb == IntPtr.Zero || Mem == null || Model == null) return IntPtr.Zero;
+        if (_invStamp == _playerStamp && _inv != IntPtr.Zero) return _inv;
+        _inv = Mem.ReadPtr64((IntPtr)(pb.ToInt64() + Model.InventoryOff));
+        _invStamp = _playerStamp;
+        return _inv;
     }
 
     private IntPtr ResolvePlayer()
@@ -289,7 +304,7 @@ public sealed class TmlEngine : IDisposable
     {
         var m = Mem; var pb = PlayerBase();
         if (m == null || pb == IntPtr.Zero || Model == null) return 0;
-        IntPtr inv = m.ReadPtr64((IntPtr)(pb.ToInt64() + Model.InventoryOff));
+        IntPtr inv = InventoryBase();
         return inv == IntPtr.Zero ? 0 : m.ReadInt32((IntPtr)(inv.ToInt64() + 8));
     }
 
@@ -309,7 +324,7 @@ public sealed class TmlEngine : IDisposable
         if (m == null || pb == IntPtr.Zero || Model == null) return 0;
         int aOff = Model.ItemFields.GetValueOrDefault("ammo", 0);
         if (aOff == 0) return 0;
-        IntPtr inv = m.ReadPtr64((IntPtr)(pb.ToInt64() + Model.InventoryOff));
+        IntPtr inv = InventoryBase();
         if (inv == IntPtr.Zero) return 0;
         int len = m.ReadInt32((IntPtr)(inv.ToInt64() + 8));
         if (len < 58) return 0;
@@ -336,7 +351,7 @@ public sealed class TmlEngine : IDisposable
     {
         var m = Mem; var pb = PlayerBase();
         if (m == null || pb == IntPtr.Zero || Model == null) return IntPtr.Zero;
-        IntPtr inv = m.ReadPtr64((IntPtr)(pb.ToInt64() + Model.InventoryOff));
+        IntPtr inv = InventoryBase();
         if (inv == IntPtr.Zero) return IntPtr.Zero;
         int len = m.ReadInt32((IntPtr)(inv.ToInt64() + 8));
         if (slot < 0 || slot >= len) return IntPtr.Zero;
@@ -469,7 +484,7 @@ public sealed class TmlEngine : IDisposable
     {
         var m = Mem; var pb = PlayerBase();
         if (m == null || pb == IntPtr.Zero || Model == null) return 0;
-        IntPtr inv = m.ReadPtr64((IntPtr)(pb.ToInt64() + Model.InventoryOff));
+        IntPtr inv = InventoryBase();
         if (inv == IntPtr.Zero) return 0;
         int len = m.ReadInt32((IntPtr)(inv.ToInt64() + 8));
         int count = Math.Min(len, 58);

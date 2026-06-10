@@ -9,9 +9,6 @@ public sealed class TmlField
     public FieldKind Kind;
     public string TypeName = "";
 
-    public bool IsPrimitive => Kind is FieldKind.Int32 or FieldKind.UInt32 or FieldKind.Int16
-        or FieldKind.Byte or FieldKind.SByte or FieldKind.Boolean or FieldKind.Int64
-        or FieldKind.Single or FieldKind.Double;
 }
 
 /// <summary>Everything discovered once (per session) via ClrMD; used live via plain RPM.</summary>
@@ -37,9 +34,6 @@ public sealed class TmlModel
 
     // ---- aimbot: Main statics + NPC field offsets (0 / empty if not resolved) ----
     public ulong NpcArray;        // &Main.npc (NPC[] ref)
-    public ulong MouseXAddr;      // &Main.mouseX (int, screen-space cursor)
-    public ulong MouseYAddr;      // &Main.mouseY (int, screen-space cursor)
-    public ulong ScreenPosition;  // &Main.screenPosition (Vector2 — world coord at screen top-left)
     public ulong GameViewMatrix;  // &Main.GameViewMatrix (SpriteViewMatrix ref — applied render zoom)
     public ulong GameZoomTarget;  // &Main.GameZoomTarget (float — settings zoom, fallback)
     public int ViewZoomOff = -1;  // SpriteViewMatrix zoom (Vector2) field offset
@@ -59,5 +53,4 @@ public sealed class TmlModel
     public int ItemType => ItemFields.GetValueOrDefault("type", 0);
     public int ItemStack => ItemFields.GetValueOrDefault("stack", 0);
     public int ItemMaxStack => ItemFields.GetValueOrDefault("maxStack", 0);
-    public int ItemPrefix => ItemFields.GetValueOrDefault("prefix", 0);
 }

@@ -248,7 +248,14 @@ public sealed class ScopedDropPatcher
     {
         var dec = Iced.Intel.Decoder.Create(64, code, Iced.Intel.DecoderOptions.None);
         int i = 0;
-        while (i < min) { var ins = dec.Decode(); if (ins.IsInvalid) return 0; i += ins.Length; }
+        while (i < min)
+        {
+            var ins = dec.Decode();
+            if (ins.IsInvalid) return 0;
+            // Relocating an IP-relative or branch instruction into the cave would corrupt it -> refuse.
+            if (ins.IsIPRelativeMemoryOperand || ins.FlowControl != Iced.Intel.FlowControl.Next) return 0;
+            i += ins.Length;
+        }
         return i;
     }
 }

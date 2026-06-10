@@ -34,6 +34,9 @@ public sealed class TmlForm : Form
     private string _lastAimStatus = "";
     private int _rareLogTick;
     private long _stickyFastUntilMs; // re-resolve patches fast for ~30s after any change, then back off
+    private Font? _headerFont;       // one bold group-header font, reused instead of allocating per row
+    private Font HeaderFont => _headerFont ??= new Font(Font, FontStyle.Bold);
+    private HashSet<string>? _buffGroups; // computed once per table build, not per search keystroke
     private TmlField? _fLife, _fLifeMax, _fMana, _fManaMax;
 
     // High-frequency writer: per-frame-recomputed values (move/mine speed) must be written
@@ -403,6 +406,7 @@ public sealed class TmlForm : Form
             {
                 _engine.Attach();
                 _rows = CheatTable.Build(_engine.Model!, _buffs.Buffs, _engine.Injector);
+                _buffGroups = null; // recompute the buff-group set for the fresh table
             }
             _sticky.Clear(); // fresh process: drop any stale patched-address bookkeeping
             _scopedDrop.Clear();
@@ -445,6 +449,7 @@ public sealed class TmlForm : Form
         {
             if (!_engine.Rediscover()) return;
             _rows = CheatTable.Build(_engine.Model!, _buffs.Buffs, _engine.Injector);
+            _buffGroups = null; // recompute the buff-group set for the fresh table
         }
         foreach (var r in _rows)
             if (prev.TryGetValue(r.Desc, out var s)) { r.Active = s.Active; r.FrozenText = s.FrozenText; }
@@ -539,7 +544,7 @@ public sealed class TmlForm : Form
 
     /// <summary>Groups that hold buff/potion rows (rendered in the Potions tab, not the Cheats tab).</summary>
     private HashSet<string> BuffGroups() =>
-        _rows.Where(r => r.Kind == RowKind.Buff).Select(r => r.Group).ToHashSet();
+        _buffGroups ??= _rows.Where(r => r.Kind == RowKind.Buff).Select(r => r.Group).ToHashSet();
 
     private void RebuildGrid()
     {
@@ -568,7 +573,7 @@ public sealed class TmlForm : Form
                 row.Cells["desc"].Value = r.Desc;
                 row.DefaultCellStyle.BackColor = HeaderBg;
                 row.DefaultCellStyle.ForeColor = HeaderFg;
-                row.DefaultCellStyle.Font = new Font(Font, FontStyle.Bold);
+                row.DefaultCellStyle.Font = HeaderFont;
                 row.Cells["active"].ReadOnly = true;
                 ((DataGridViewCheckBoxCell)row.Cells["active"]).Value = null;
                 ((DataGridViewCheckBoxCell)row.Cells["active"]).FlatStyle = FlatStyle.Flat;
@@ -1128,6 +1133,7 @@ public sealed class TmlForm : Form
         try { _spawnBoost.Disable(); } catch { } // restore vanilla spawn defaults on the target
         try { _rareSpawn.Disable(); } catch { }  // remove the NewNPC cave on the target
         try { _aimbot.Disable(); } catch { }     // stop overriding the cursor
+        _headerFont?.Dispose();
         lock (_engine.Sync) _engine.Dispose(); // restores any injected patches
         base.OnFormClosed(e);
     }
