@@ -498,6 +498,70 @@ internal static class ClrDiscovery
         Console.WriteLine($"{typeName}  MethodTable=0x{t.MethodTable:X}");
     }
 
+    public static void ProbeTileArrays(int pid)
+    {
+        using var dt = DataTarget.CreateSnapshotAndAttach(pid);
+        using var runtime = dt.ClrVersions.First().CreateRuntime();
+        var mainT = FindType(runtime, "Terraria.Main");
+        int RD(string n)
+        {
+            var f = mainT?.GetStaticFieldByName(n);
+            if (f == null) return -1;
+            foreach (var d in runtime.AppDomains) { try { return f.Read<int>(d); } catch { } }
+            return -2;
+        }
+        int w = RD("maxTilesX"), h = RD("maxTilesY");
+        Console.WriteLine($"maxTilesX={w} maxTilesY={h}  want=(W+1)(H+1)={(long)(w + 1) * (h + 1)}");
+        Console.WriteLine("Scanning heap for large arrays whose element type mentions 'Tile'...");
+        int shown = 0;
+        foreach (var o in runtime.Heap.EnumerateObjects())
+        {
+            var t = o.Type;
+            if (t == null || !t.IsArray) continue;
+            var cn = t.ComponentType?.Name ?? "";
+            int len; try { len = o.AsArray().Length; } catch { continue; }
+            if (len < 100000) continue; // tile storage is (W+1)(H+1), millions of elements
+            if (cn.Contains("BatchDrawInfo")) continue;
+            Console.WriteLine($"  @0x{o.Address:X} {cn}[]  len={len}  compSize=0x{t.ComponentSize:X}");
+            if (++shown > 30) { Console.WriteLine("  …(more)"); break; }
+        }
+        if (shown == 0) Console.WriteLine("  NONE found — element type name differs (mod?) or no world loaded.");
+
+        // Read the real TileTypeData[] and tally biome tiles to verify the ID sets + read path.
+        ulong arr = 0; int alen = 0;
+        foreach (var o in runtime.Heap.EnumerateObjects())
+        {
+            if (o.Type?.IsArray == true && o.Type.ComponentType?.Name == "Terraria.TileTypeData")
+            { try { int l = o.AsArray().Length; if (l == (long)(w + 1) * (h + 1)) { arr = o.Address + 0x10; alen = l; break; } } catch { } }
+        }
+        if (arr == 0) { Console.WriteLine("TileTypeData[] not matched by (W+1)(H+1)."); return; }
+        Console.WriteLine($"Reading TileTypeData[] data @0x{arr:X} ({alen} tiles)…");
+        var corr = new HashSet<ushort> { 23, 24, 25, 32, 112, 163, 398, 400, 661 };
+        var crim = new HashSet<ushort> { 199, 200, 203, 234, 352, 399, 401, 662 };
+        var hall = new HashSet<ushort> { 109, 110, 115, 116, 117, 164, 402, 403 };
+        long nC = 0, nR = 0, nH = 0, nSolid = 0;
+        var hist = new Dictionary<ushort, long>();
+        byte[] buf = new byte[1 << 21];
+        long done = 0;
+        while (done < alen)
+        {
+            int elems = (int)Math.Min(buf.Length / 2, alen - done);
+            int got = dt.DataReader.Read(arr + (ulong)(done * 2), buf.AsSpan(0, elems * 2));
+            if (got < elems * 2) { Console.WriteLine($"  read short at {done} (got {got})"); break; }
+            for (int k = 0; k < elems; k++)
+            {
+                ushort ty = (ushort)(buf[k * 2] | (buf[k * 2 + 1] << 8));
+                if (ty == 0) continue;
+                nSolid++;
+                if (corr.Contains(ty)) nC++; else if (crim.Contains(ty)) nR++; else if (hall.Contains(ty)) nH++;
+                hist[ty] = hist.GetValueOrDefault(ty) + 1;
+            }
+            done += elems;
+        }
+        Console.WriteLine($"solid={nSolid}  corruption={nC}  crimson={nR}  hallow={nH}");
+        Console.WriteLine("top tile types: " + string.Join(", ", hist.OrderByDescending(kv => kv.Value).Take(15).Select(kv => $"{kv.Key}:{kv.Value}")));
+    }
+
     public static void MethodAt(int pid, ulong ip)
     {
         using var dt = DataTarget.CreateSnapshotAndAttach(pid);

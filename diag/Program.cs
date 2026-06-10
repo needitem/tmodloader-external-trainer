@@ -1317,6 +1317,13 @@ if (mode == "typemt")
     return 0;
 }
 
+if (mode == "tilearray") // tilearray [pid]
+{
+    int pid = args.Length > 1 ? int.Parse(args[1]) : proc.Id;
+    ClrDiscovery.ProbeTileArrays(pid);
+    return 0;
+}
+
 if (mode == "rares")
 {
     ClrDiscovery.ListRareNpcs(proc.Id, args.Length > 1 ? int.Parse(args[1]) : 2);

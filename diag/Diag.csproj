@@ -16,6 +16,7 @@
     <Compile Include="..\src\Core\*.cs" />
     <Compile Include="..\src\Cheats\*.cs" />
     <Compile Include="..\src\Tml\*.cs" />
+    <Compile Remove="..\src\Tml\WorldMapScanner.cs" />  <!-- needs System.Drawing; diag is headless -->
   </ItemGroup>
 
   <ItemGroup>

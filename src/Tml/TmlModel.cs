@@ -9,6 +9,10 @@ public sealed class TmlField
     public FieldKind Kind;
     public string TypeName = "";
 
+    /// <summary>Numeric/bool fields that can be read/written directly (used by the diag field dumper).</summary>
+    public bool IsPrimitive => Kind is FieldKind.Int32 or FieldKind.UInt32 or FieldKind.Int16
+        or FieldKind.Byte or FieldKind.SByte or FieldKind.Boolean
+        or FieldKind.Int64 or FieldKind.Single or FieldKind.Double;
 }
 
 /// <summary>Everything discovered once (per session) via ClrMD; used live via plain RPM.</summary>

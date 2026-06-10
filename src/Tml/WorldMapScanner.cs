@@ -1,6 +1,8 @@
+using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
+using TerrariaTrainer.Memory;
 
 namespace TerrariaTrainer.Tml;
 
@@ -10,6 +12,10 @@ namespace TerrariaTrainer.Tml;
 /// (maxTilesX+1)·(maxTilesY+1), flat-indexed column-major as <c>x*(H+1)+y</c>. We locate that ~40 MB
 /// array once via ClrMD (it sits on the LOH, so its address is stable until the world reloads), then
 /// bulk-read it via RPM and classify each tile by id. On-demand (it's a snapshot, not live).
+///
+/// In a multiplayer Host &amp; Play game the full world (and the spreading biomes) lives on the dedicated
+/// SERVER process — the client only holds the tile sections it has explored — so we read the world from
+/// the server when one is present, falling back to the client in single-player.
 /// </summary>
 public sealed class WorldMapScanner
 {
@@ -17,6 +23,7 @@ public sealed class WorldMapScanner
     public WorldMapScanner(TmlEngine engine) => _engine = engine;
 
     private ulong _addr; private int _len, _w, _h;
+    private ProcessMemory? _mem; private int _pid = -1; private bool _isServer;
     public string Status { get; private set; } = "";
 
     // --- biome tile ids (vanilla 1.4; the base blocks that actually spread) ---
@@ -42,23 +49,28 @@ public sealed class WorldMapScanner
         unchecked((int)0xFFC82828), // 4 crimson (red)
     };
 
-    /// <summary>(Re)locate the tile-type array via ClrMD. Slow (~snapshot); call when stale.</summary>
+    /// <summary>(Re)locate the tile-type array via ClrMD, on the world-owning process (server in MP,
+    /// else the client). Slow (~snapshot); call when stale.</summary>
     public bool Locate()
     {
-        if (_engine.Proc == null) { Status = "not attached"; return false; }
-        var (addr, len, w, h) = TmlDiscovery.FindTileTypeArray(_engine.Proc.Id);
+        var server = TmlDiscovery.FindServerProcess();
+        int pid = server?.Id ?? _engine.Proc?.Id ?? -1;
+        if (pid < 0) { Status = "not attached"; return false; }
+        var (addr, len, w, h) = TmlDiscovery.FindTileTypeArray(pid);
         if (addr == 0 || len <= 0 || w <= 0 || h <= 0) { Status = "tile array not found (load into a world)"; return false; }
+        if (_pid != pid) { try { _mem?.Dispose(); } catch { } _mem = ProcessMemory.Attach(Process.GetProcessById(pid)); _pid = pid; }
+        _isServer = server != null;
         _addr = addr; _len = len; _w = w; _h = h;
-        Status = $"located {w}×{h} tiles @ 0x{addr:X}";
+        Status = $"located {w}×{h} tiles @ 0x{addr:X} ({(_isServer ? "server" : "client")})";
         return true;
     }
 
     /// <summary>Scan the world and render a biome map no larger than maxW×maxH. Returns null on failure.</summary>
     public Bitmap? Render(int maxW, int maxH)
     {
-        var mem = _engine.Mem;
+        if ((_addr == 0 || _mem == null) && !Locate()) return null;
+        var mem = _mem;                       // world-owning process (server in MP)
         if (mem == null) { Status = "not attached"; return null; }
-        if (_addr == 0 && !Locate()) return null;
 
         int W = _w, H = _h, H1 = H + 1;
         int scale = Math.Max(1, Math.Max((W + maxW - 1) / maxW, (H + maxH - 1) / maxH));
@@ -95,15 +107,16 @@ public sealed class WorldMapScanner
         Marshal.Copy(px, 0, data.Scan0, px.Length);
         bmp.UnlockBits(data);
 
-        // Player marker (bright yellow), from world position → tile → output cell.
+        // Player marker (bright yellow), from world position → tile → output cell. The local player's
+        // position lives in the CLIENT process, so read it from the engine — not the server `mem`.
         try
         {
-            var model = _engine.Model; var pb = _engine.PlayerBase();
+            var cmem = _engine.Mem; var model = _engine.Model; var pb = _engine.PlayerBase();
             var posF = model?.PlayerFields.FirstOrDefault(f => f.Name == "position");
-            if (posF != null && pb != IntPtr.Zero)
+            if (cmem != null && posF != null && pb != IntPtr.Zero)
             {
                 // ReadBytes allocates its own buffer (no shared scratch), so this is safe off-thread.
-                byte[] pbuf = mem.ReadBytes((IntPtr)(pb.ToInt64() + posF.Offset), 8);
+                byte[] pbuf = cmem.ReadBytes((IntPtr)(pb.ToInt64() + posF.Offset), 8);
                 int tx = (int)(BitConverter.ToSingle(pbuf, 0) / 16f) / scale;
                 int ty = (int)(BitConverter.ToSingle(pbuf, 4) / 16f) / scale;
                 for (int dy = -2; dy <= 2; dy++)
