@@ -33,6 +33,7 @@ public sealed class TmlForm : Form
     private string _lastRareStatus = "";
     private string _lastAimStatus = "";
     private int _rareLogTick;
+    private int _sprayTick;
     private long _stickyFastUntilMs; // re-resolve patches fast for ~30s after any change, then back off
     private Font? _headerFont;       // one bold group-header font, reused instead of allocating per row
     private Font HeaderFont => _headerFont ??= new Font(Font, FontStyle.Bold);
@@ -176,7 +177,7 @@ public sealed class TmlForm : Form
     private static readonly RowKind[] WriterKinds =
     {
         RowKind.Value, RowKind.Toggle, RowKind.Inject, RowKind.Fast,
-        RowKind.Tools, RowKind.Craft, RowKind.BuffClear, RowKind.InfAmmo,
+        RowKind.Tools, RowKind.Craft, RowKind.BuffClear, RowKind.InfAmmo, RowKind.SprayRange,
     };
 
     /// <summary>True if any write-cheat is toggled on (cheap snapshot check, no memory access).</summary>
@@ -205,6 +206,8 @@ public sealed class TmlForm : Form
                 case RowKind.Craft: _engine.SetCraftAnywhere(); break;
                 case RowKind.BuffClear: if (int.TryParse(r.InjectValue, out var bid)) _engine.ClearBuff(bid); break;
                 case RowKind.InfAmmo: _engine.TopAmmo(); break;
+                case RowKind.SprayRange: // ~once/frame is plenty; scanning the projectile array each 5ms is wasteful
+                    if (++_sprayTick % 3 == 0) _engine.BoostSprays(float.TryParse(r.InjectValue, out var cs) ? cs : 16f); break;
             }
         }
     }
@@ -476,7 +479,7 @@ public sealed class TmlForm : Form
             foreach (var r in _rows)
             {
                 if (r.Kind is RowKind.GroupHeader or RowKind.Action) continue;
-                bool editable = r.Kind is RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost or RowKind.RareSpawn;
+                bool editable = r.Kind is RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost or RowKind.RareSpawn or RowKind.SprayRange;
                 if (!r.Active && !editable) continue;          // inactive non-editable: nothing to remember
                 // Editable rows persist their value even when OFF (prefix "off:") so settings stick.
                 data[r.Desc] = editable ? (r.Active ? "" : "off:") + r.InjectValue
@@ -505,7 +508,7 @@ public sealed class TmlForm : Form
         {
             if (r.Kind is RowKind.GroupHeader or RowKind.Action) continue;
             if (!data.TryGetValue(r.Desc, out var saved)) continue;
-            bool editable = r.Kind is RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost or RowKind.RareSpawn;
+            bool editable = r.Kind is RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost or RowKind.RareSpawn or RowKind.SprayRange;
             bool inactive = saved.StartsWith("off:", StringComparison.Ordinal);
             string val = inactive ? saved[4..] : saved;
 
@@ -602,9 +605,9 @@ public sealed class TmlForm : Form
                 row.Cells["type"].Value = TypeLabel(r);
                 row.Cells["value"].Value = r.Kind == RowKind.Action ? "▶ click On"
                     : r.Kind == RowKind.Value ? (r.FrozenText ?? "—")
-                    : r.Kind is RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost ? r.InjectValue
+                    : r.Kind is RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost or RowKind.SprayRange ? r.InjectValue
                     : "—";
-                row.Cells["value"].ReadOnly = r.Kind is not (RowKind.Value or RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost);
+                row.Cells["value"].ReadOnly = r.Kind is not (RowKind.Value or RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost or RowKind.SprayRange);
             }
         }
         grid.ResumeLayout();
@@ -626,6 +629,7 @@ public sealed class TmlForm : Form
         RowKind.Crate => "fishing",
         RowKind.ScopedDrop => "drop(me)",
         RowKind.SpawnBoost => "spawn",
+        RowKind.SprayRange => "spray",
         RowKind.RareSpawn => "rare▾",
         RowKind.Aimbot => "aim",
         RowKind.BuffClear => "no-debuff",
@@ -755,6 +759,10 @@ public sealed class TmlForm : Form
                 ApplySpawnBoost();
                 AppendLog($"{(r.Active ? "ON" : "OFF")}: {r.Desc}");
                 break;
+            case RowKind.SprayRange:
+                // the high-frequency writer keeps the spray alive + cruising while active.
+                AppendLog($"{(r.Active ? "ON" : "OFF")}: {r.Desc}");
+                break;
             case RowKind.RareSpawn:
                 if (r.Active)
                 {
@@ -840,7 +848,7 @@ public sealed class TmlForm : Form
     {
         if (e.RowIndex < 0) return;
         var grow = _grid.Rows[e.RowIndex];
-        if (grow.Tag is not CheatRow r || r.Kind is not (RowKind.Value or RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost)) return;
+        if (grow.Tag is not CheatRow r || r.Kind is not (RowKind.Value or RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost or RowKind.SprayRange)) return;
         if (_grid.Columns[e.ColumnIndex].Name == "value")
         {
             _grid.BeginEdit(true);
@@ -890,6 +898,14 @@ public sealed class TmlForm : Form
             r.InjectValue = sv.ToString();
             ApplySpawnBoost();
             AppendLog($"{r.Desc.Split(' ')[0]} {(r.PatchMethod == "rate" ? "interval" : "cap")} set to {sv}");
+            SaveConfig();
+            return;
+        }
+        if (r.Kind == RowKind.SprayRange)
+        {
+            if (!int.TryParse(text.Trim(), out var sv) || sv < 1) { sv = 16; grow.Cells["value"].Value = "16"; }
+            r.InjectValue = sv.ToString();
+            AppendLog($"Spray cruise speed set to {sv}");
             SaveConfig();
             return;
         }

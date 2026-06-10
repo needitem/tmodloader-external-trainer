@@ -38,6 +38,7 @@ public sealed class TmlModel
 
     // ---- aimbot: Main statics + NPC field offsets (0 / empty if not resolved) ----
     public ulong NpcArray;        // &Main.npc (NPC[] ref)
+    public ulong ProjectileArray; // &Main.projectile (Projectile[] ref — for Clentaminator spray range)
     public ulong GameViewMatrix;  // &Main.GameViewMatrix (SpriteViewMatrix ref — applied render zoom)
     public ulong GameZoomTarget;  // &Main.GameZoomTarget (float — settings zoom, fallback)
     public int ViewZoomOff = -1;  // SpriteViewMatrix zoom (Vector2) field offset

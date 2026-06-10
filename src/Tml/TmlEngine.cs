@@ -229,6 +229,47 @@ public sealed class TmlEngine : IDisposable
         return names.Count == 0 ? "Forest/Surface" : string.Join(", ", names);
     }
 
+    // ---- Clentaminator spray range ----
+    // Spray projectiles (Projectile.aiStyle == 31) decelerate and expire, capping the Clentaminator's
+    // reach. While active, the high-freq writer keeps each of MY sprays alive (timeLeft topped up) and
+    // re-asserts a constant cruise speed in its current direction, so it flies straight across the world
+    // converting tiles the whole way — effectively infinite range. Client-side (the local player owns the
+    // spray; the server still applies the tile conversion it requests).
+    private const int ProjActive = 0x24, ProjVel = 0x34, ProjAiStyle = 0xD8, ProjTimeLeft = 0xDC, ProjOwner = 0xCC;
+
+    public int BoostSprays(float cruise)
+    {
+        var m = Mem;
+        if (m == null || Model == null || Model.ProjectileArray == 0) return 0;
+        IntPtr arr = m.ReadPtr64((IntPtr)Model.ProjectileArray);
+        if (arr == IntPtr.Zero) return 0;
+        int len = m.ReadInt32((IntPtr)(arr.ToInt64() + 8));
+        if (len <= 0 || len > 4000) len = 1000;
+        int myPlayer = Model.StaticMyPlayer != 0 ? m.ReadInt32((IntPtr)Model.StaticMyPlayer) : -1;
+        // Bulk-read the whole reference array once (8 KB) rather than 1000 individual reads.
+        byte[] refs = m.ReadBytes((IntPtr)(arr.ToInt64() + ArrayData), len * 8);
+        if (refs.Length < len * 8) return 0;
+        int n = 0;
+        for (int i = 0; i < len; i++)
+        {
+            long b = BitConverter.ToInt64(refs, i * 8);
+            if (b == 0) continue;
+            if (m.ReadByte((IntPtr)(b + ProjActive)) == 0) continue;          // not active
+            if (m.ReadInt32((IntPtr)(b + ProjAiStyle)) != 31) continue;       // not a spray
+            if (myPlayer >= 0 && m.ReadInt32((IntPtr)(b + ProjOwner)) != myPlayer) continue; // not mine
+            m.WriteInt32((IntPtr)(b + ProjTimeLeft), 600);                    // keep it alive
+            float vx = m.ReadFloat((IntPtr)(b + ProjVel)), vy = m.ReadFloat((IntPtr)(b + ProjVel + 4));
+            float sp = (float)Math.Sqrt(vx * vx + vy * vy);
+            if (sp > 0.1f)
+            {
+                m.WriteFloat((IntPtr)(b + ProjVel), vx / sp * cruise);
+                m.WriteFloat((IntPtr)(b + ProjVel + 4), vy / sp * cruise);
+            }
+            n++;
+        }
+        return n;
+    }
+
     // ---- buff helpers (int[] arrays) ----
 
     public (IntPtr id, IntPtr time, int len) BuffArrays()

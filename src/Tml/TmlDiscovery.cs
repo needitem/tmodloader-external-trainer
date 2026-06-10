@@ -219,8 +219,9 @@ public static class TmlDiscovery
             }
         }
 
-        // ---- aimbot: Main statics (npc array, render zoom) + NPC field offsets ----
+        // ---- aimbot: Main statics (npc array, render zoom) + projectile array + NPC field offsets ----
         var fNpc = mainType.GetStaticFieldByName("npc");
+        var fProj = mainType.GetStaticFieldByName("projectile");        // for Clentaminator spray range
         var fZoomT = mainType.GetStaticFieldByName("GameZoomTarget");   // float, settings zoom (fallback)
         var fViewM = mainType.GetStaticFieldByName("GameViewMatrix");   // SpriteViewMatrix, the applied render zoom
         foreach (var domain in runtime.AppDomains)
@@ -228,6 +229,7 @@ public static class TmlDiscovery
             try
             {
                 if (fNpc != null && model.NpcArray == 0) { ulong a = fNpc.GetAddress(domain); if (a != 0) model.NpcArray = a; }
+                if (fProj != null && model.ProjectileArray == 0) { ulong a = fProj.GetAddress(domain); if (a != 0) model.ProjectileArray = a; }
                 if (fZoomT != null && model.GameZoomTarget == 0) { ulong a = fZoomT.GetAddress(domain); if (a != 0) model.GameZoomTarget = a; }
                 if (fViewM != null && model.GameViewMatrix == 0) { ulong a = fViewM.GetAddress(domain); if (a != 0) model.GameViewMatrix = a; }
             }
