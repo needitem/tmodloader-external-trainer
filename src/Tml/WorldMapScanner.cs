@@ -24,6 +24,7 @@ public sealed class WorldMapScanner
     public WorldMapScanner(TmlEngine engine, ServerTarget target) { _engine = engine; _target = target; }
 
     private ulong _addr; private int _len, _w, _h;
+    private ulong _npcArr;   // &Main.npc on the world process (server in MP) — for NPC dots
     private ProcessMemory? _mem; private bool _isServer;
     public string Status { get; private set; } = "";
 
@@ -60,6 +61,8 @@ public sealed class WorldMapScanner
         if (addr == 0 || len <= 0 || w <= 0 || h <= 0) { Status = "tile array not found (load into a world)"; return false; }
         _mem = mem; _isServer = _target.IsServer;
         _addr = addr; _len = len; _w = w; _h = h;
+        // Resolve the world process's NPC array so we can plot live NPCs (server-authoritative in MP).
+        try { TmlDiscovery.ResolveStaticFields(_target.Pid, "Terraria.Main", "npc").TryGetValue("npc", out _npcArr); } catch { _npcArr = 0; }
         Status = $"located {w}×{h} tiles @ 0x{addr:X} ({(_isServer ? "server" : "client")})";
         return true;
     }
@@ -105,6 +108,46 @@ public sealed class WorldMapScanner
         for (int i = 0; i < px.Length; i++) px[i] = CatColor[cat[i]];
         Marshal.Copy(px, 0, data.Scan0, px.Length);
         bmp.UnlockBits(data);
+
+        // Live NPC dots from the world process: boss = orange, town/friendly = lime, enemy = red.
+        try
+        {
+            var nf = _engine.Model?.NpcFields;
+            if (_npcArr != 0 && nf != null && nf.TryGetValue("active", out int oAct) && nf.TryGetValue("position", out int oPos))
+            {
+                nf.TryGetValue("boss", out int oBoss);
+                nf.TryGetValue("townNPC", out int oTown);
+                nf.TryGetValue("friendly", out int oFriend);
+                IntPtr narr = mem.ReadPtr64((IntPtr)_npcArr);
+                if (narr != IntPtr.Zero)
+                {
+                    int nlen = mem.ReadInt32((IntPtr)(narr.ToInt64() + 8));
+                    if (nlen <= 0 || nlen > 1000) nlen = 200;
+                    byte[] refs = mem.ReadBytes((IntPtr)(narr.ToInt64() + 0x10), nlen * 8);
+                    for (int i = 0; i + 8 <= refs.Length; i += 8)
+                    {
+                        long np = BitConverter.ToInt64(refs, i);
+                        if (np == 0 || mem.ReadByte((IntPtr)(np + oAct)) == 0) continue;
+                        byte[] pos = mem.ReadBytes((IntPtr)(np + oPos), 8);
+                        int nx = (int)(BitConverter.ToSingle(pos, 0) / 16f) / scale;
+                        int ny = (int)(BitConverter.ToSingle(pos, 4) / 16f) / scale;
+                        if (nx < 0 || nx >= outW || ny < 0 || ny >= outH) continue;
+                        bool boss = oBoss > 0 && mem.ReadByte((IntPtr)(np + oBoss)) != 0;
+                        bool town = (oTown > 0 && mem.ReadByte((IntPtr)(np + oTown)) != 0)
+                                 || (oFriend > 0 && mem.ReadByte((IntPtr)(np + oFriend)) != 0);
+                        Color col = boss ? Color.Orange : town ? Color.Lime : Color.Cyan;
+                        int r = boss ? 2 : 0;
+                        for (int dy = -r; dy <= r; dy++)
+                            for (int dx = -r; dx <= r; dx++)
+                            {
+                                int mx = nx + dx, my = ny + dy;
+                                if (mx >= 0 && mx < outW && my >= 0 && my < outH) bmp.SetPixel(mx, my, col);
+                            }
+                    }
+                }
+            }
+        }
+        catch { }
 
         // Player marker (bright yellow), from world position → tile → output cell. The local player's
         // position lives in the CLIENT process, so read it from the engine — not the server `mem`.

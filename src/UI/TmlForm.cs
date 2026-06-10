@@ -75,7 +75,7 @@ public sealed class TmlForm : Form
     private TabPage _cheatsTab = null!, _potionsTab = null!, _mapTab = null!, _invTab = null!;
     // World Map tab: biome overview render + controls.
     private readonly PictureBox _mapBox = new() { Dock = DockStyle.Fill, SizeMode = PictureBoxSizeMode.Zoom, BackColor = Color.FromArgb(30, 30, 40) };
-    private readonly Label _mapStatus = new() { Dock = DockStyle.Top, Height = 22, ForeColor = Color.DimGray, Text = "  Scan to render the world — Corruption = purple, Crimson = red, Hallow = pink, you = yellow." };
+    private readonly Label _mapStatus = new() { Dock = DockStyle.Top, Height = 22, ForeColor = Color.DimGray, Text = "  Scan — biomes: Corruption purple / Crimson red / Hallow pink.  NPCs: boss orange / town green / enemy cyan.  You: yellow." };
     private readonly Button _btnScanMap = new() { Text = "Scan World", Width = 100, Height = 26 };
     private readonly Button _btnRelocateMap = new() { Text = "Re-locate (after world change)", Width = 190, Height = 26 };
     private readonly TextBox _log = new() { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, BorderStyle = BorderStyle.None, BackColor = Color.FromArgb(245, 245, 245) };
