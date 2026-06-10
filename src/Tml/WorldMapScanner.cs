@@ -20,10 +20,11 @@ namespace TerrariaTrainer.Tml;
 public sealed class WorldMapScanner
 {
     private readonly TmlEngine _engine;
-    public WorldMapScanner(TmlEngine engine) => _engine = engine;
+    private readonly ServerTarget _target;
+    public WorldMapScanner(TmlEngine engine, ServerTarget target) { _engine = engine; _target = target; }
 
     private ulong _addr; private int _len, _w, _h;
-    private ProcessMemory? _mem; private int _pid = -1; private bool _isServer;
+    private ProcessMemory? _mem; private bool _isServer;
     public string Status { get; private set; } = "";
 
     // --- biome tile ids (vanilla 1.4; the base blocks that actually spread) ---
@@ -53,13 +54,11 @@ public sealed class WorldMapScanner
     /// else the client). Slow (~snapshot); call when stale.</summary>
     public bool Locate()
     {
-        var server = TmlDiscovery.FindServerProcess();
-        int pid = server?.Id ?? _engine.Proc?.Id ?? -1;
-        if (pid < 0) { Status = "not attached"; return false; }
-        var (addr, len, w, h) = TmlDiscovery.FindTileTypeArray(pid);
+        var mem = _target.Ensure();
+        if (mem == null) { Status = "not attached"; return false; }
+        var (addr, len, w, h) = TmlDiscovery.FindTileTypeArray(_target.Pid);
         if (addr == 0 || len <= 0 || w <= 0 || h <= 0) { Status = "tile array not found (load into a world)"; return false; }
-        if (_pid != pid) { try { _mem?.Dispose(); } catch { } _mem = ProcessMemory.Attach(Process.GetProcessById(pid)); _pid = pid; }
-        _isServer = server != null;
+        _mem = mem; _isServer = _target.IsServer;
         _addr = addr; _len = len; _w = w; _h = h;
         Status = $"located {w}×{h} tiles @ 0x{addr:X} ({(_isServer ? "server" : "client")})";
         return true;

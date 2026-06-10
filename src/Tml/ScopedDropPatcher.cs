@@ -26,11 +26,12 @@ public sealed class ScopedDropPatcher
     private const int ArrData = 0x10;            // managed array data start (bool[] -> 1 byte each)
 
     private readonly TmlEngine _client;
+    private readonly ServerTarget _target;       // shared handle to the world-authoritative process
     private readonly object _lock = new();
     private volatile bool _enabled;
 
     private int _targetPid = -1;
-    private ProcessMemory? _mem;
+    private ProcessMemory? _mem;                  // non-owning ref to _target.Mem (never disposed here)
     private ulong _playerArray, _myPlayerStatic;
     private bool _isServer;
     private int _myWho = -1;
@@ -42,7 +43,7 @@ public sealed class ScopedDropPatcher
     private readonly Hook _rl = new();            // Player.RollLuck
     private readonly Hook _td = new();            // ItemDropResolver.TryDropping
 
-    public ScopedDropPatcher(TmlEngine client) => _client = client;
+    public ScopedDropPatcher(TmlEngine client, ServerTarget target) { _client = client; _target = target; }
 
     public bool Enabled => _enabled;
     public string Status { get { lock (_lock) return _status; } }
@@ -55,8 +56,8 @@ public sealed class ScopedDropPatcher
 
     private void ResetTarget()
     {
+        // _mem is owned by ServerTarget — drop the reference only, never dispose it here.
         _targetPid = -1; _myWho = -1; _playerArray = 0; _myPlayerStatic = 0; _isServer = false;
-        try { _mem?.Dispose(); } catch { }
         _mem = null;
     }
 
@@ -69,16 +70,16 @@ public sealed class ScopedDropPatcher
 
     private void EnsureTargetAndHook()
     {
-        var server = TmlDiscovery.FindServerProcess();
-        int wantPid = server?.Id ?? _client.Proc?.Id ?? -1;
-        if (wantPid < 0) { _status = "no game"; return; }
+        var mem = _target.Ensure();
+        int wantPid = _target.Pid;
+        if (mem == null || wantPid < 0) { _status = "no game"; return; }
 
         if (wantPid != _targetPid)
         {
             RestoreAll(); ResetTarget();
             _targetPid = wantPid;
-            _isServer = server != null;
-            _mem = ProcessMemory.Attach(Process.GetProcessById(wantPid));
+            _isServer = _target.IsServer;
+            _mem = mem;
             var model = TmlDiscovery.Discover(wantPid);
             _playerArray = model.StaticPlayerArray;
             _myPlayerStatic = model.StaticMyPlayer;

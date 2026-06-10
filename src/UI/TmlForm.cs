@@ -45,6 +45,9 @@ public sealed class TmlForm : Form
     private Thread? _writer;
     private volatile bool _writerRun = true;
 
+    // One shared handle to the world-authoritative process (server in MP, else client) for the
+    // drop/spawn/rare patchers and the map scanner.
+    private readonly ServerTarget _target;
     // Re-applies method-entry patches across .NET tiered-JIT relocations (every ~2.5s).
     private readonly StickyPatcher _sticky;
     private Thread? _stickyThread;
@@ -87,12 +90,13 @@ public sealed class TmlForm : Form
         StartPosition = FormStartPosition.CenterScreen;
         Font = new Font("Segoe UI", 9f);
 
+        _target = new ServerTarget(_engine);
         _sticky = new StickyPatcher(_engine);
-        _scopedDrop = new ScopedDropPatcher(_engine);
-        _spawnBoost = new SpawnBoostPatcher(_engine);
-        _rareSpawn = new RareSpawnPatcher(_engine);
+        _scopedDrop = new ScopedDropPatcher(_engine, _target);
+        _spawnBoost = new SpawnBoostPatcher(_target);
+        _rareSpawn = new RareSpawnPatcher(_target);
         _aimbot = new AimbotPatcher(_engine);
-        _mapScanner = new WorldMapScanner(_engine);
+        _mapScanner = new WorldMapScanner(_engine, _target);
         _engine.Log += AppendLog;
         _btnAttach.Click += (_, _) => DoAttach();
         _btnRescan.Click += (_, _) => DoRescan();
@@ -409,6 +413,7 @@ public sealed class TmlForm : Form
                 _buffGroups = null; // recompute the buff-group set for the fresh table
             }
             _sticky.Clear(); // fresh process: drop any stale patched-address bookkeeping
+            _target.Reset(); // fresh attach: re-resolve the world process (server/client) next tick
             _scopedDrop.Clear();
             _spawnBoost.Clear();
             _rareSpawn.Clear();
@@ -1134,6 +1139,7 @@ public sealed class TmlForm : Form
         try { _rareSpawn.Disable(); } catch { }  // remove the NewNPC cave on the target
         try { _aimbot.Disable(); } catch { }     // stop overriding the cursor
         _headerFont?.Dispose();
+        try { _target.Reset(); } catch { }       // close the shared server handle
         lock (_engine.Sync) _engine.Dispose(); // restores any injected patches
         base.OnFormClosed(e);
     }

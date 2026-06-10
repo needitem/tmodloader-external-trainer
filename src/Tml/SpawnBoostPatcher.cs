@@ -1,6 +1,3 @@
-using System.Diagnostics;
-using TerrariaTrainer.Memory;
-
 namespace TerrariaTrainer.Tml;
 
 /// <summary>
@@ -17,21 +14,19 @@ namespace TerrariaTrainer.Tml;
 /// </summary>
 public sealed class SpawnBoostPatcher
 {
-    private readonly TmlEngine _client;
+    private readonly ServerTarget _target;
     private readonly object _lock = new();
     private volatile bool _enabled;
 
     private int _rate = 30;     // smaller = faster spawns (vanilla 600)
     private int _max = 40;      // more = denser (vanilla 5)
 
-    private int _targetPid = -1;
-    private ProcessMemory? _mem;
-    private bool _isServer;
+    private int _lastPid = -1;
     private ulong _aDefRate, _aDefMax, _aLiveRate, _aLiveMax;
     private int _origRate = -1, _origMax = -1;
     private string _status = "off";
 
-    public SpawnBoostPatcher(TmlEngine client) => _client = client;
+    public SpawnBoostPatcher(ServerTarget target) => _target = target;
 
     public bool Enabled => _enabled;
     public string Status { get { lock (_lock) return _status; } }
@@ -49,20 +44,19 @@ public sealed class SpawnBoostPatcher
 
     private void Reset()
     {
-        _targetPid = -1; _isServer = false;
+        _lastPid = -1;
         _aDefRate = _aDefMax = _aLiveRate = _aLiveMax = 0; _origRate = _origMax = -1;
-        try { _mem?.Dispose(); } catch { }
-        _mem = null;
     }
 
     private void Restore()
     {
         try
         {
-            if (_mem != null && _aDefRate != 0 && _origRate >= 0)
+            var mem = _target.Mem;
+            if (mem != null && _aDefRate != 0 && _origRate >= 0)
             {
-                _mem.WriteInt32((IntPtr)_aDefRate, _origRate);
-                _mem.WriteInt32((IntPtr)_aDefMax, _origMax);
+                mem.WriteInt32((IntPtr)_aDefRate, _origRate);
+                mem.WriteInt32((IntPtr)_aDefMax, _origMax);
             }
         }
         catch { }
@@ -77,36 +71,33 @@ public sealed class SpawnBoostPatcher
 
     private void Apply()
     {
-        var server = TmlDiscovery.FindServerProcess();
-        int wantPid = server?.Id ?? _client.Proc?.Id ?? -1;
-        if (wantPid < 0) { _status = "no game"; return; }
+        var mem = _target.Ensure();
+        if (mem == null) { _status = "no game"; return; }
 
-        if (wantPid != _targetPid)
+        if (_target.Pid != _lastPid)
         {
-            Restore(); Reset();
-            _targetPid = wantPid;
-            _isServer = server != null;
-            _mem = ProcessMemory.Attach(Process.GetProcessById(wantPid));
-            var a = TmlDiscovery.ResolveStaticFields(wantPid, "Terraria.NPC",
+            Reset();
+            _lastPid = _target.Pid;
+            var a = TmlDiscovery.ResolveStaticFields(_target.Pid, "Terraria.NPC",
                 "defaultSpawnRate", "defaultMaxSpawns", "spawnRate", "maxSpawns");
             a.TryGetValue("defaultSpawnRate", out _aDefRate);
             a.TryGetValue("defaultMaxSpawns", out _aDefMax);
             a.TryGetValue("spawnRate", out _aLiveRate);
             a.TryGetValue("maxSpawns", out _aLiveMax);
-            if (_mem != null && _aDefRate != 0 && _origRate < 0)
+            if (_aDefRate != 0 && _origRate < 0)
             {
-                try { _origRate = _mem.ReadInt32((IntPtr)_aDefRate); _origMax = _mem.ReadInt32((IntPtr)_aDefMax); } catch { }
+                try { _origRate = mem.ReadInt32((IntPtr)_aDefRate); _origMax = mem.ReadInt32((IntPtr)_aDefMax); } catch { }
             }
         }
-        if (_mem == null || _aDefRate == 0 || _aDefMax == 0) { _status = "spawn statics not found"; return; }
+        if (_aDefRate == 0 || _aDefMax == 0) { _status = "spawn statics not found"; return; }
 
         // The game copies the defaults into spawnRate/maxSpawns each spawn frame; writing the
         // defaults is what persists. Also poke the live values for an immediate effect this frame.
-        _mem.WriteInt32((IntPtr)_aDefRate, _rate);
-        _mem.WriteInt32((IntPtr)_aDefMax, _max);
-        if (_aLiveRate != 0) _mem.WriteInt32((IntPtr)_aLiveRate, _rate);
-        if (_aLiveMax != 0) _mem.WriteInt32((IntPtr)_aLiveMax, _max);
+        mem.WriteInt32((IntPtr)_aDefRate, _rate);
+        mem.WriteInt32((IntPtr)_aDefMax, _max);
+        if (_aLiveRate != 0) mem.WriteInt32((IntPtr)_aLiveRate, _rate);
+        if (_aLiveMax != 0) mem.WriteInt32((IntPtr)_aLiveMax, _max);
 
-        _status = $"{(_isServer ? "server" : "client")} pid {_targetPid} — spawnRate {_rate}, maxSpawns {_max} (vanilla {_origRate}/{_origMax})";
+        _status = $"{(_target.IsServer ? "server" : "client")} pid {_target.Pid} — spawnRate {_rate}, maxSpawns {_max} (vanilla {_origRate}/{_origMax})";
     }
 }

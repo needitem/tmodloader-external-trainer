@@ -19,13 +19,13 @@ namespace TerrariaTrainer.Tml;
 /// </summary>
 public sealed class RareSpawnPatcher
 {
-    private readonly TmlEngine _client;
+    private readonly ServerTarget _target;   // shared handle to the world-authoritative process
     private readonly object _lock = new();
     private volatile bool _enabled;
     private int _type;                       // chosen NPC type to force
 
     private int _targetPid = -1;
-    private ProcessMemory? _mem;
+    private ProcessMemory? _mem;             // non-owning ref to _target.Mem (never disposed here)
     private bool _isServer;
     private ulong _scopeLo, _scopeHi;         // code range of the REAL (MonoMod-dynamic) NPC.SpawnNPC
     private string _scopeName = "";           // what we locked the scope onto
@@ -35,7 +35,7 @@ public sealed class RareSpawnPatcher
     private sealed class Hook { public IntPtr Cave; public ulong At; public byte[]? Orig; public ulong OrigAddr; }
     private readonly Hook _nn = new();        // NPC.NewNPC
 
-    public RareSpawnPatcher(TmlEngine client) => _client = client;
+    public RareSpawnPatcher(ServerTarget target) => _target = target;
 
     public bool Enabled => _enabled;
     public string Status { get { lock (_lock) return _status; } }
@@ -50,8 +50,8 @@ public sealed class RareSpawnPatcher
 
     private void ResetTarget()
     {
+        // _mem is owned by ServerTarget — drop the reference only, never dispose it here.
         _targetPid = -1; _isServer = false; _scopeLo = _scopeHi = 0; _scopeName = "";
-        try { _mem?.Dispose(); } catch { }
         _mem = null;
     }
 
@@ -65,16 +65,16 @@ public sealed class RareSpawnPatcher
     private void EnsureTargetAndHook()
     {
         if (_type <= 0) { _status = "pick a rare mob first"; return; }
-        var server = TmlDiscovery.FindServerProcess();
-        int wantPid = server?.Id ?? _client.Proc?.Id ?? -1;
-        if (wantPid < 0) { _status = "no game"; return; }
+        var mem = _target.Ensure();
+        int wantPid = _target.Pid;
+        if (mem == null || wantPid < 0) { _status = "no game"; return; }
 
         if (wantPid != _targetPid)
         {
             RestoreAll(); ResetTarget();
             _targetPid = wantPid;
-            _isServer = server != null;
-            _mem = ProcessMemory.Attach(Process.GetProcessById(wantPid));
+            _isServer = _target.IsServer;
+            _mem = mem;
         }
         if (_mem == null) { _status = "no mem"; return; }
 
