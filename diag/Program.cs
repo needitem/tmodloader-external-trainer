@@ -1317,6 +1317,12 @@ if (mode == "typemt")
     return 0;
 }
 
+if (mode == "npcs") // npcs <pid>
+{
+    ClrDiscovery.ProbeLoadedNpcs(args.Length > 1 ? int.Parse(args[1]) : proc.Id);
+    return 0;
+}
+
 if (mode == "tilearray") // tilearray [pid]
 {
     int pid = args.Length > 1 ? int.Parse(args[1]) : proc.Id;

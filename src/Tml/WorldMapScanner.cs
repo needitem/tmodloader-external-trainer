@@ -33,6 +33,18 @@ public sealed class WorldMapScanner
     private static readonly HashSet<ushort> Crimson = new() { 199, 200, 203, 234, 352, 399, 401, 662 };
     private static readonly HashSet<ushort> Hallow = new() { 109, 110, 115, 116, 117, 164, 402, 403 };
 
+    // Rescuable "bound" NPC types (vanilla) — found tied up in the world, freed into town NPCs.
+    private static readonly HashSet<int> BoundNpcs = new()
+    {
+        105, // Bound Goblin -> Goblin Tinkerer
+        106, // Bound Wizard
+        123, // Bound Mechanic
+        140, // Webbed Stylist
+        354, // Bartender (unconscious) -> Tavernkeep
+        587, // Bound Golfer
+        250, // Tortured Soul -> Tax Collector
+    };
+
     // category: 0 none/air, 1 other solid, 2 hallow, 3 corruption, 4 crimson (higher = draw priority)
     private static byte Classify(ushort type)
     {
@@ -118,6 +130,7 @@ public sealed class WorldMapScanner
                 nf.TryGetValue("boss", out int oBoss);
                 nf.TryGetValue("townNPC", out int oTown);
                 nf.TryGetValue("friendly", out int oFriend);
+                nf.TryGetValue("type", out int oType);
                 IntPtr narr = mem.ReadPtr64((IntPtr)_npcArr);
                 if (narr != IntPtr.Zero)
                 {
@@ -132,11 +145,16 @@ public sealed class WorldMapScanner
                         int nx = (int)(BitConverter.ToSingle(pos, 0) / 16f) / scale;
                         int ny = (int)(BitConverter.ToSingle(pos, 4) / 16f) / scale;
                         if (nx < 0 || nx >= outW || ny < 0 || ny >= outH) continue;
+                        int type = oType > 0 ? mem.ReadInt32((IntPtr)(np + oType)) : 0;
                         bool boss = oBoss > 0 && mem.ReadByte((IntPtr)(np + oBoss)) != 0;
-                        bool town = (oTown > 0 && mem.ReadByte((IntPtr)(np + oTown)) != 0)
-                                 || (oFriend > 0 && mem.ReadByte((IntPtr)(np + oFriend)) != 0);
-                        Color col = boss ? Color.Orange : town ? Color.Lime : Color.Cyan;
-                        int r = boss ? 2 : 0;
+                        bool town = oTown > 0 && mem.ReadByte((IntPtr)(np + oTown)) != 0;
+                        bool friendly = oFriend > 0 && mem.ReadByte((IntPtr)(np + oFriend)) != 0;
+                        Color col; int r;
+                        if (BoundNpcs.Contains(type)) { col = Color.Magenta; r = 2; } // rescue me!
+                        else if (boss) { col = Color.Orange; r = 2; }
+                        else if (town) { col = Color.Lime; r = 1; }
+                        else if (friendly) { col = Color.Gainsboro; r = 0; }          // critter
+                        else { col = Color.Cyan; r = 0; }                              // enemy
                         for (int dy = -r; dy <= r; dy++)
                             for (int dx = -r; dx <= r; dx++)
                             {

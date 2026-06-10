@@ -562,6 +562,34 @@ internal static class ClrDiscovery
         Console.WriteLine("top tile types: " + string.Join(", ", hist.OrderByDescending(kv => kv.Value).Take(15).Select(kv => $"{kv.Key}:{kv.Value}")));
     }
 
+    public static void ProbeLoadedNpcs(int pid)
+    {
+        using var dt = DataTarget.CreateSnapshotAndAttach(pid);
+        using var runtime = dt.ClrVersions.First().CreateRuntime();
+        var mainT = FindType(runtime, "Terraria.Main");
+        var fNpc = mainT?.GetStaticFieldByName("npc");
+        ClrObject arr = default;
+        if (fNpc != null) foreach (var d in runtime.AppDomains) { try { var o = fNpc.ReadObject(d); if (o.IsValid) { arr = o; break; } } catch { } }
+        if (!arr.IsValid) { Console.WriteLine("Main.npc not found"); return; }
+        var a = arr.AsArray();
+        int active = 0;
+        Console.WriteLine("Active NPCs (type | active/friendly/townNPC/boss | name):");
+        for (int i = 0; i < a.Length; i++)
+        {
+            var npc = a.GetObjectValue(i);
+            if (!npc.IsValid) continue;
+            bool act; try { act = npc.ReadField<bool>("active"); } catch { continue; }
+            if (!act) continue;
+            int type = 0; bool fr = false, town = false, boss = false;
+            try { type = npc.ReadField<int>("type"); fr = npc.ReadField<bool>("friendly"); town = npc.ReadField<bool>("townNPC"); boss = npc.ReadField<bool>("boss"); } catch { }
+            string nm = ""; try { nm = npc.ReadStringField("_givenName") ?? ""; } catch { }
+            string full = ""; try { full = npc.ReadStringField("_fullName") ?? ""; } catch { }
+            Console.WriteLine($"  type {type,-5} {(fr ? "F" : "-")}{(town ? "T" : "-")}{(boss ? "B" : "-")}  given='{nm}' full='{full}'");
+            active++;
+        }
+        Console.WriteLine($"total active: {active}");
+    }
+
     public static void MethodAt(int pid, ulong ip)
     {
         using var dt = DataTarget.CreateSnapshotAndAttach(pid);
