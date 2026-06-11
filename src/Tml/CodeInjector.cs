@@ -310,13 +310,20 @@ public sealed class CodeInjector
         return PatchReturn(key, code);
     }
 
-    public bool CanPatch(string methodKey) => _model.Methods.ContainsKey(methodKey);
+    // A sticky 'return' patch only needs the method to EXIST — the sticky patcher resolves + patches the
+    // live code once it's JITed, even if it wasn't compiled when we attached. (MethodSources records
+    // every discovered method; Methods only has the ones already compiled.)
+    public bool CanPatch(string methodKey) => _model.MethodSources.ContainsKey(methodKey);
 
     // ---- method-set patches (patch every overload of a name at once) ----
     private readonly Dictionary<string, List<(IntPtr entry, byte[] orig)>> _setHooks = new();
 
     public bool CanPatchSet(string setKey) =>
         _model.MethodSets.TryGetValue(setKey, out var l) && l.Count > 0;
+
+    /// <summary>The method set EXISTS (overloads present), even if not yet JITed — the sticky patcher
+    /// resolves and patches it once compiled, so the feature should still be offered.</summary>
+    public bool CanPatchSetSource(string setKey) => _model.MethodSources.ContainsKey(setKey);
 
     /// <summary>Patch every overload in a method set so it immediately returns (code = return stub).</summary>
     public int PatchSetReturn(string setKey, byte[] code)

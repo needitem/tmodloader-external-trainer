@@ -263,13 +263,19 @@ public static class TmlDiscovery
     private static void AddNamedMethod(ClrRuntime runtime, TmlModel model, string typeName, string methodName)
     {
         var t = FindType(runtime, typeName);
-        var m = t?.Methods.FirstOrDefault(x => x.Name == methodName && x.NativeCode != 0);
-        if (m == null) return;
-        int size; try { size = (int)m.HotColdInfo.HotSize; } catch { size = 0; }
-        if (size <= 0 || size > 0x40000) size = 0x1000;
-        string shortType = typeName.Contains('.') ? typeName[(typeName.LastIndexOf('.') + 1)..] : typeName;
-        model.Methods[$"{shortType}.{methodName}"] = (m.NativeCode, size);
-        model.MethodSources[$"{shortType}.{methodName}"] = (typeName, methodName);
+        if (t == null || t.Methods.All(x => x.Name != methodName)) return; // method absent
+        string key = $"{(typeName.Contains('.') ? typeName[(typeName.LastIndexOf('.') + 1)..] : typeName)}.{methodName}";
+        // Always record the source so the sticky patcher can re-resolve + patch it once JITed, even if
+        // it wasn't compiled at attach time. The address (for the gate/immediate use) goes in only when
+        // an overload is already compiled.
+        model.MethodSources[key] = (typeName, methodName);
+        var m = t.Methods.FirstOrDefault(x => x.Name == methodName && x.NativeCode != 0);
+        if (m != null)
+        {
+            int size; try { size = (int)m.HotColdInfo.HotSize; } catch { size = 0; }
+            if (size <= 0 || size > 0x40000) size = 0x1000;
+            model.Methods[key] = (m.NativeCode, size);
+        }
     }
 
     /// <summary>Find the overload of a method whose signature contains <paramref name="sigContains"/>, store under <paramref name="key"/>.</summary>
@@ -291,18 +297,25 @@ public static class TmlDiscovery
     {
         var t = FindType(runtime, typeName);
         if (t == null) return;
+        bool exists = false;
         var list = new List<(ulong addr, int size)>();
         foreach (var m in t.Methods)
         {
-            if (m.Name != methodName || m.NativeCode == 0) continue;
+            if (m.Name != methodName) continue;
+            exists = true;                          // overload present (may be un-JITed at attach time)
+            if (m.NativeCode == 0) continue;
             int size; try { size = (int)m.HotColdInfo.HotSize; } catch { size = 0; }
             if (size <= 0 || size > 0x40000) size = 0x1000;
             list.Add((m.NativeCode, size));
         }
-        if (list.Count == 0) return;
-        string shortType = typeName.Contains('.') ? typeName[(typeName.LastIndexOf('.') + 1)..] : typeName;
-        model.MethodSets[$"{shortType}.{methodName}"] = list;
-        model.MethodSources[$"{shortType}.{methodName}"] = (typeName, methodName);
+        if (!exists) return;
+        string key = $"{(typeName.Contains('.') ? typeName[(typeName.LastIndexOf('.') + 1)..] : typeName)}.{methodName}";
+        // Always record the source so the sticky patcher can re-resolve + patch this set once it's
+        // JITed — even if the method wasn't compiled yet when we attached (e.g. you cast magic only
+        // after enabling Infinite Mana). Addresses (for the immediate patch + the row gate) go in only
+        // when at least one overload is already compiled.
+        model.MethodSources[key] = (typeName, methodName);
+        if (list.Count > 0) model.MethodSets[key] = list;
     }
 
     /// <summary>

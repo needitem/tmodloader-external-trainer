@@ -137,7 +137,7 @@ public static class CheatTable
                 // d.Method holds "SetKey:ret;SetKey:ret" (ret = zero|true). Include if ANY set is present.
                 if (injector == null || d.Method == null) continue;
                 var specs = d.Method.Split(';', StringSplitOptions.RemoveEmptyEntries);
-                bool any = specs.Any(s => injector.CanPatchSet(s.Split(':')[0]));
+                bool any = specs.Any(s => injector.CanPatchSetSource(s.Split(':')[0]));
                 if (!any) continue;
                 EmitGroup(rows, ref lastGroup, d.Group);
                 rows.Add(new CheatRow { Kind = RowKind.PatchSet, Group = d.Group, Desc = d.Desc, PatchMethod = d.Method });
