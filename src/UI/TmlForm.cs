@@ -180,8 +180,10 @@ public sealed class TmlForm : Form
     // Kinds the writer thread re-asserts each tick; used to decide whether to run hot.
     private static readonly RowKind[] WriterKinds =
     {
+        // Craft is now a sticky 'return true' on the recipe checks (no per-frame _adjTile write).
+        // Inject stays here as a cheap fallback in case its NOP'd reset is undone by a JIT relocation.
         RowKind.Value, RowKind.Toggle, RowKind.Inject, RowKind.Fast,
-        RowKind.Tools, RowKind.Craft, RowKind.BuffClear, RowKind.InfAmmo, RowKind.SprayRange,
+        RowKind.Tools, RowKind.BuffClear, RowKind.InfAmmo, RowKind.SprayRange,
     };
 
     /// <summary>True if any write-cheat is toggled on (cheap snapshot check, no memory access).</summary>
@@ -207,7 +209,6 @@ public sealed class TmlForm : Form
                 case RowKind.Inject: _engine.WriteField(r.Field!, r.InjectValue); break;
                 case RowKind.Fast: _engine.WriteField(r.Field!, r.InjectValue); break;
                 case RowKind.Tools: _engine.AssertCachedTools(int.TryParse(r.InjectValue, out var t) ? t : 1, 4); break;
-                case RowKind.Craft: _engine.SetCraftAnywhere(); break;
                 case RowKind.BuffClear: if (int.TryParse(r.InjectValue, out var bid)) _engine.ClearBuff(bid); break;
                 case RowKind.InfAmmo: _engine.TopAmmo(); break;
                 case RowKind.SprayRange: // ~once/frame is plenty; scanning the projectile array each 5ms is wasteful
@@ -723,13 +724,15 @@ public sealed class TmlForm : Form
             case RowKind.Craft:
                 if (r.Active)
                 {
-                    int done = 0;
-                    foreach (var k in CraftKeys) if (_engine.Injector!.PatchReturnTrue(k)) done++;
-                    AppendLog($"Craft Anything ON ({done}/{CraftKeys.Length} checks bypassed)");
+                    // Sticky 'return true' on the recipe checks — survives JIT relocation and, unlike
+                    // forcing the per-frame-recomputed _adjTile array, has no flicker race with the
+                    // crafting UI reading adjacency the same frame.
+                    foreach (var k in CraftKeys) _sticky.Register(k, RetTrue);
+                    AppendLog($"Craft Anything ON ({CraftKeys.Length} recipe checks bypassed)");
                 }
                 else
                 {
-                    foreach (var k in CraftKeys) _engine.Injector!.UnhookEntry(k);
+                    foreach (var k in CraftKeys) _sticky.Unregister(k);
                     AppendLog("Craft Anything OFF");
                 }
                 break;
@@ -954,7 +957,7 @@ public sealed class TmlForm : Form
             else if (r.Kind == RowKind.Inject) { _engine.Injector?.Restore(r.Field!.Name); }
             else if (r.Kind == RowKind.UseHook) { _engine.Injector?.UnhookUseSites(r.Field!.Name); }
             else if (r.Kind == RowKind.Tools) { _engine.RestoreFastTools(); }
-            else if (r.Kind == RowKind.Craft) { foreach (var k in CraftKeys) _engine.Injector?.UnhookEntry(k); }
+            else if (r.Kind == RowKind.Craft) { foreach (var k in CraftKeys) _sticky.Unregister(k); }
             else if (r.Kind is RowKind.Patch or RowKind.PatchInt) { _sticky.Unregister(r.PatchMethod); }
             else if (r.Kind == RowKind.Vanity) { _engine.Injector?.UnhookVanityAccessories(); }
             else if (r.Kind == RowKind.PatchSet) { foreach (var spec in r.PatchMethod.Split(';', StringSplitOptions.RemoveEmptyEntries)) _sticky.Unregister(spec.Split(':')[0]); }
