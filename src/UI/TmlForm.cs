@@ -873,6 +873,10 @@ public sealed class TmlForm : Form
     {
         if (r.Desc.StartsWith("Max Stack"))
             lock (_engine.Sync) AppendLog($"Max-stacked {_engine.MaxStackInventory()} item(s).");
+        else if (r.Desc.StartsWith("Summon Traveling"))
+            lock (_engine.Sync) AppendLog(_travelShop.Summon()
+                ? "Traveling Merchant summoned — he'll arrive shortly with fresh stock."
+                : $"Summon failed: {_travelShop.Status}");
         else if (r.Desc.StartsWith("Re-roll Traveling"))
             lock (_engine.Sync) AppendLog(_travelShop.Reroll()
                 ? "Traveling Merchant stock re-rolled — re-open the shop to see new items."

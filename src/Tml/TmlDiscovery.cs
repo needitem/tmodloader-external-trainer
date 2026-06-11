@@ -180,6 +180,7 @@ public static class TmlDiscovery
         AddNamedMethod(runtime, model, "Terraria.Projectile", "FishingCheck_RollItemDrop");
         AddNamedMethod(runtime, model, "Terraria.Chest", "SetupTravelShop");             // re-roll the Traveling Merchant
         AddNamedMethod(runtime, model, "Terraria.Main", "DoUpdate_Enter_ToggleChat");    // clean per-frame hook site
+        AddNamedMethod(runtime, model, "Terraria.NPC", "SpawnOnPlayer");                 // force the Traveling Merchant to arrive
         var faType = FindType(runtime, "Terraria.DataStructures.FishingAttempt");
         var crateF = faType?.GetFieldByName("crate");
         if (crateF != null) model.FishingCrateOff = crateF.Offset; // value type: byref offset has no MT header

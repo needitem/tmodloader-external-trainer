@@ -195,6 +195,7 @@ public static class CheatTable
 
         // ---- traveling merchant action ----
         EmitGroup(rows, ref lastGroup, "🛒 Traveling Merchant");
+        rows.Add(new CheatRow { Kind = RowKind.Action, Group = "🛒 Traveling Merchant", Desc = "Summon Traveling Merchant — make him arrive (click)" });
         rows.Add(new CheatRow { Kind = RowKind.Action, Group = "🛒 Traveling Merchant", Desc = "Re-roll Traveling Merchant stock (click)" });
 
         // ---- buff toggles, grouped by function (mirrors CT's potion categories) ----
