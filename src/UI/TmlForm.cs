@@ -1100,9 +1100,11 @@ public sealed class TmlForm : Form
     {
         var enemyR = _rows.FirstOrDefault(x => x.Kind == RowKind.Aimbot && x.PatchMethod == "enemy");
         var bossR = _rows.FirstOrDefault(x => x.Kind == RowKind.Aimbot && x.PatchMethod == "boss");
-        bool enemyOn = enemyR?.Active ?? false, bossOn = bossR?.Active ?? false;
-        if (!enemyOn && !bossOn) { _aimbot.Disable(); return; }
+        var cursorR = _rows.FirstOrDefault(x => x.Kind == RowKind.Aimbot && x.PatchMethod == "cursor");
+        bool enemyOn = enemyR?.Active ?? false, bossOn = bossR?.Active ?? false, cursorOn = cursorR?.Active ?? false;
+        if (!enemyOn && !bossOn && !cursorOn) { _aimbot.Disable(); return; }
         _aimbot.SetPreferBoss(bossOn);
+        _aimbot.SetNearCursor(cursorOn);
         _aimbot.Enable();
     }
 

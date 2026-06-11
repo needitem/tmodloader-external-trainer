@@ -23,9 +23,11 @@ public sealed class AimbotPatcher
     private readonly TmlEngine _engine;
     private volatile bool _enabled;
     private volatile bool _preferBoss;
+    private volatile bool _nearCursor;      // pick the enemy nearest the MOUSE, not the character
     private string _status = "off";
 
     private int _targetIndex = -1;          // sticky: held until the enemy dies/despawns
+    private int _lastSetX = -9999, _lastSetY = -9999; // last client px WE moved the cursor to (cursor mode)
     private const int MaxNpcs = 200;        // Terraria's Main.maxNPCs
     private const int ArrayData = 0x10;     // MethodTable(8) + length(8)
 
@@ -43,8 +45,9 @@ public sealed class AimbotPatcher
     public string Status => _status;
 
     public void SetPreferBoss(bool v) => _preferBoss = v;
+    public void SetNearCursor(bool v) => _nearCursor = v;
     public void Enable() => _enabled = true;
-    public void Disable() { _enabled = false; _targetIndex = -1; _status = "off"; }
+    public void Disable() { _enabled = false; _targetIndex = -1; _lastSetX = _lastSetY = -9999; _status = "off"; }
     /// <summary>Drop transient state (e.g. on detach); no memory to restore.</summary>
     public void Clear() { _targetIndex = -1; _gameWindow = IntPtr.Zero; _gameWindowPid = -1; _cachedModel = null; }
 
@@ -88,9 +91,20 @@ public sealed class AimbotPatcher
         float hx = (w * 0.5f) / zoom + 16f, hy = (h * 0.5f) / zoom + 16f;
         bool OnScreen(float cx, float cy) => Math.Abs(cx - px) <= hx && Math.Abs(cy - py) <= hy;
 
+        // "Nearest" origin: the player center by default, or the cursor's world position in cursor
+        // mode. World pos under the cursor is the inverse of the aim transform below.
+        float ox = px, oy = py;
+        if (_nearCursor && Native.GetCursorPos(out var cp) && Native.ScreenToClient(hwnd, ref cp))
+        {
+            ox = px + (cp.X - w / 2f) / zoom;
+            oy = py + (cp.Y - h / 2f) / zoom;
+            // If the user moved the cursor since OUR last aim, let them redirect onto a new target.
+            if (Math.Abs(cp.X - _lastSetX) > 8 || Math.Abs(cp.Y - _lastSetY) > 8) _targetIndex = -1;
+        }
+
         // Target stickiness: keep hammering the current enemy until it dies / despawns / leaves the
-        // screen, THEN switch to the next nearest on-screen one. (Re-picking every tick made the aim
-        // flit between similar-distance enemies.)
+        // screen, THEN switch to the next nearest one (to the origin). (Re-picking every tick made the
+        // aim flit between similar-distance enemies.)
         float tx, ty;
         if (_targetIndex >= 0 && TryNpcCenter(m, model, _targetIndex, out tx, out ty) && OnScreen(tx, ty))
         {
@@ -98,19 +112,20 @@ public sealed class AimbotPatcher
         }
         else
         {
-            _targetIndex = PickTarget(m, model, px, py, hx, hy);
+            _targetIndex = PickTarget(m, model, ox, oy, px, py, hx, hy);
             if (_targetIndex < 0 || !TryNpcCenter(m, model, _targetIndex, out tx, out ty))
             { _targetIndex = -1; _status = "no on-screen target"; return; }
         }
 
         // Aim: the player sits at the screen center, so the target's client pixel is
         // center + (target - player) * zoom (world units = screen px at zoom 1).
-        int cliX = (int)(w / 2f + (tx - px) * zoom);
-        int cliY = (int)(h / 2f + (ty - py) * zoom);
+        int cliX = Math.Clamp((int)(w / 2f + (tx - px) * zoom), 0, w - 1);
+        int cliY = Math.Clamp((int)(h / 2f + (ty - py) * zoom), 0, h - 1);
 
-        var pt = new Native.POINT { X = Math.Clamp(cliX, 0, w - 1), Y = Math.Clamp(cliY, 0, h - 1) };
+        var pt = new Native.POINT { X = cliX, Y = cliY };
         if (Native.ClientToScreen(hwnd, ref pt)) Native.SetCursorPos(pt.X, pt.Y);
-        _status = "aiming" + (_preferBoss ? " — boss" : "");
+        _lastSetX = cliX; _lastSetY = cliY; // remember where WE put it, to detect the user moving it
+        _status = "aiming" + (_nearCursor ? " — cursor" : _preferBoss ? " — boss" : "");
     }
 
     /// <summary>World render zoom (1.0 = default). Prefers the live SpriteViewMatrix zoom (what the
@@ -193,7 +208,7 @@ public sealed class AimbotPatcher
 
     /// <summary>Scan Main.npc[] for the closest valid on-screen hostile (and closest boss); slot index.
     /// hx/hy are the visible half-extents in world px around the player (off-screen enemies skipped).</summary>
-    private int PickTarget(ProcessMemory m, TmlModel model, float px, float py, float hx, float hy)
+    private int PickTarget(ProcessMemory m, TmlModel model, float ox, float oy, float px, float py, float hx, float hy)
     {
         IntPtr arr = m.ReadPtr64((IntPtr)model.NpcArray);
         if (arr == IntPtr.Zero) return -1;
@@ -216,8 +231,8 @@ public sealed class AimbotPatcher
             // (No damage>0 filter: that field's offset can be wrong on the patched type and would
             //  wrongly drop real enemies — better to occasionally target a critter than miss a mob.)
             float cx = BF(_nPos) + BI(_nWidth) / 2f, cy = BF(_nPos + 4) + BI(_nHeight) / 2f;
-            float dx = cx - px, dy = cy - py;
-            if (Math.Abs(dx) > hx || Math.Abs(dy) > hy) continue;           // off-screen → ignore
+            if (Math.Abs(cx - px) > hx || Math.Abs(cy - py) > hy) continue;  // off-screen (vs player) → ignore
+            float dx = cx - ox, dy = cy - oy;                                // distance to the chosen origin
             float d = dx * dx + dy * dy;
             if (d < bestD) { bestD = d; best = i; }
             if (boss && d < bestBossD) { bestBossD = d; bestBoss = i; }
