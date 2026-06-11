@@ -34,6 +34,7 @@ public sealed class TmlForm : Form
     private string _lastAimStatus = "";
     private int _rareLogTick;
     private int _sprayTick;
+    private int _anglerTick;
     private long _stickyFastUntilMs; // re-resolve patches fast for ~30s after any change, then back off
     private Font? _headerFont;       // one bold group-header font, reused instead of allocating per row
     private Font HeaderFont => _headerFont ??= new Font(Font, FontStyle.Bold);
@@ -183,7 +184,7 @@ public sealed class TmlForm : Form
         // Craft is now a sticky 'return true' on the recipe checks (no per-frame _adjTile write).
         // Inject stays here as a cheap fallback in case its NOP'd reset is undone by a JIT relocation.
         RowKind.Value, RowKind.Toggle, RowKind.Inject, RowKind.Fast,
-        RowKind.Tools, RowKind.BuffClear, RowKind.InfAmmo, RowKind.SprayRange,
+        RowKind.Tools, RowKind.BuffClear, RowKind.InfAmmo, RowKind.SprayRange, RowKind.AnglerQuest,
     };
 
     /// <summary>True if any write-cheat is toggled on (cheap snapshot check, no memory access).</summary>
@@ -213,6 +214,8 @@ public sealed class TmlForm : Form
                 case RowKind.InfAmmo: _engine.TopAmmo(); break;
                 case RowKind.SprayRange: // ~once/frame is plenty; scanning the projectile array each 5ms is wasteful
                     if (++_sprayTick % 3 == 0) _engine.BoostSprays(float.TryParse(r.InjectValue, out var cs) ? cs : 16f); break;
+                case RowKind.AnglerQuest: // keep the daily-done flag/list clear so the quest can be re-turned-in
+                    if (++_anglerTick % 4 == 0) _engine.SetAnglerUnlimited(); break;
             }
         }
     }
@@ -641,6 +644,7 @@ public sealed class TmlForm : Form
         RowKind.SpawnBoost => "spawn",
         RowKind.SprayRange => "spray",
         RowKind.TileReach => "reach",
+        RowKind.AnglerQuest => "angler",
         RowKind.RareSpawn => "rare▾",
         RowKind.Aimbot => "aim",
         RowKind.BuffClear => "no-debuff",
@@ -780,6 +784,11 @@ public sealed class TmlForm : Form
                 // Clean patch of the per-frame reset in ResetEffects (no write-race flicker).
                 if (r.Active) { int v = int.TryParse(r.InjectValue, out var tv) ? tv : 25; _tileReach.Enable(v); AppendLog($"ON: {r.Desc} → {v} tiles"); }
                 else { _tileReach.Disable(); AppendLog($"OFF: {r.Desc} (restored 5/4)"); }
+                break;
+            case RowKind.AnglerQuest:
+                // the high-frequency writer keeps the daily-done flag/list clear while active.
+                if (r.Active) _engine.SetAnglerUnlimited();
+                AppendLog($"{(r.Active ? "ON" : "OFF")}: {r.Desc}");
                 break;
             case RowKind.RareSpawn:
                 if (r.Active)

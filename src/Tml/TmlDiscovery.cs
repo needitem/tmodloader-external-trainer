@@ -222,6 +222,8 @@ public static class TmlDiscovery
         // ---- aimbot: Main statics (npc array, render zoom) + projectile array + NPC field offsets ----
         var fTrX = playerType.GetStaticFieldByName("tileRangeX");       // base block-reach (static, vanilla 5/4)
         var fTrY = playerType.GetStaticFieldByName("tileRangeY");
+        var fAnglerFin = mainType.GetStaticFieldByName("anglerQuestFinished");    // angler daily limit (SP)
+        var fAnglerWho = mainType.GetStaticFieldByName("anglerWhoFinishedToday"); // angler daily limit (MP)
         var fNpc = mainType.GetStaticFieldByName("npc");
         var fProj = mainType.GetStaticFieldByName("projectile");        // for Clentaminator spray range
         var fZoomT = mainType.GetStaticFieldByName("GameZoomTarget");   // float, settings zoom (fallback)
@@ -234,6 +236,8 @@ public static class TmlDiscovery
                 if (fProj != null && model.ProjectileArray == 0) { ulong a = fProj.GetAddress(domain); if (a != 0) model.ProjectileArray = a; }
                 if (fTrX != null && model.TileRangeXAddr == 0) { ulong a = fTrX.GetAddress(domain); if (a != 0) model.TileRangeXAddr = a; }
                 if (fTrY != null && model.TileRangeYAddr == 0) { ulong a = fTrY.GetAddress(domain); if (a != 0) model.TileRangeYAddr = a; }
+                if (fAnglerFin != null && model.AnglerFinishedAddr == 0) { ulong a = fAnglerFin.GetAddress(domain); if (a != 0) model.AnglerFinishedAddr = a; }
+                if (fAnglerWho != null && model.AnglerWhoFinishedAddr == 0) { ulong a = fAnglerWho.GetAddress(domain); if (a != 0) model.AnglerWhoFinishedAddr = a; }
                 if (fZoomT != null && model.GameZoomTarget == 0) { ulong a = fZoomT.GetAddress(domain); if (a != 0) model.GameZoomTarget = a; }
                 if (fViewM != null && model.GameViewMatrix == 0) { ulong a = fViewM.GetAddress(domain); if (a != 0) model.GameViewMatrix = a; }
             }

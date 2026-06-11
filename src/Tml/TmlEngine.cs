@@ -229,6 +229,23 @@ public sealed class TmlEngine : IDisposable
         return names.Count == 0 ? "Forest/Surface" : string.Join(", ", names);
     }
 
+    // ---- Angler quest daily-limit removal ----
+    // The Angler accepts one quest per day, gated by Main.anglerQuestFinished (single-player) and the
+    // Main.anglerWhoFinishedToday list (multiplayer, by player name). Keeping the flag false and the
+    // list empty each frame lets you turn the quest in repeatedly (catch quest fish → reward → repeat).
+    public bool HasAnglerUnlock => Model?.AnglerFinishedAddr != 0 || Model?.AnglerWhoFinishedAddr != 0;
+    public void SetAnglerUnlimited()
+    {
+        var m = Mem;
+        if (m == null || Model == null) return;
+        if (Model.AnglerFinishedAddr != 0) m.WriteByte((IntPtr)Model.AnglerFinishedAddr, 0);
+        if (Model.AnglerWhoFinishedAddr != 0)
+        {
+            IntPtr list = m.ReadPtr64((IntPtr)Model.AnglerWhoFinishedAddr);
+            if (list != IntPtr.Zero) m.WriteInt32((IntPtr)(list.ToInt64() + 0x10), 0); // List<T>._size = 0
+        }
+    }
+
     // ---- block/tile reach (the character's "arm reach" for place/mine/use) ----
     // Effective reach = Player.tileRangeX(static) + Player.blockRange(per-player). blockRange is the
     // Extendo-Grip bonus and is reset every frame in ResetEffects, so it (and the statics) must be
