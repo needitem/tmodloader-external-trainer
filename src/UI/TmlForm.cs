@@ -60,6 +60,8 @@ public sealed class TmlForm : Form
     private readonly RareSpawnPatcher _rareSpawn;
     // Auto-aim cursor weapons at the nearest enemy / boss (runs in the high-freq writer loop).
     private readonly AimbotPatcher _aimbot;
+    // Block-reach extension by patching the per-frame reset in Player.ResetEffects (client-side).
+    private readonly TileReachPatcher _tileReach;
     // Renders a world overview highlighting Corruption / Crimson / Hallow (on-demand snapshot).
     private readonly WorldMapScanner _mapScanner;
     private List<(int type, int stars, string name)> _rareNpcs = new();
@@ -97,6 +99,7 @@ public sealed class TmlForm : Form
         _spawnBoost = new SpawnBoostPatcher(_target);
         _rareSpawn = new RareSpawnPatcher(_target);
         _aimbot = new AimbotPatcher(_engine);
+        _tileReach = new TileReachPatcher(_engine);
         _mapScanner = new WorldMapScanner(_engine, _target);
         _engine.Log += AppendLog;
         _btnAttach.Click += (_, _) => DoAttach();
@@ -127,10 +130,11 @@ public sealed class TmlForm : Form
             try { if (_scopedDrop.Enabled) _scopedDrop.Tick(); } catch { }
             try { if (_spawnBoost.Enabled) _spawnBoost.Tick(); } catch { }
             try { if (_rareSpawn.Enabled) _rareSpawn.Tick(); } catch { }
+            try { if (_tileReach.Enabled) _tileReach.Tick(); } catch { }
             // Tiered-JIT relocations only happen while a method warms up (first seconds of use), so we
             // only need the costly ClrMD snapshots frequently right after a toggle; once settled, back
             // off to cut steady-state snapshot churn (each one forks the target process).
-            bool active = _sticky.AnyActive || _scopedDrop.Enabled || _spawnBoost.Enabled || _rareSpawn.Enabled;
+            bool active = _sticky.AnyActive || _scopedDrop.Enabled || _spawnBoost.Enabled || _rareSpawn.Enabled || _tileReach.Enabled;
             bool fast = Environment.TickCount64 < _stickyFastUntilMs || (_rareSpawn.Enabled && !_rareSpawn.ScopeLocked);
             Thread.Sleep(!active ? 1000 : fast ? 2500 : 6000);
         }
@@ -177,7 +181,7 @@ public sealed class TmlForm : Form
     private static readonly RowKind[] WriterKinds =
     {
         RowKind.Value, RowKind.Toggle, RowKind.Inject, RowKind.Fast,
-        RowKind.Tools, RowKind.Craft, RowKind.BuffClear, RowKind.InfAmmo, RowKind.SprayRange, RowKind.TileReach,
+        RowKind.Tools, RowKind.Craft, RowKind.BuffClear, RowKind.InfAmmo, RowKind.SprayRange,
     };
 
     /// <summary>True if any write-cheat is toggled on (cheap snapshot check, no memory access).</summary>
@@ -208,8 +212,6 @@ public sealed class TmlForm : Form
                 case RowKind.InfAmmo: _engine.TopAmmo(); break;
                 case RowKind.SprayRange: // ~once/frame is plenty; scanning the projectile array each 5ms is wasteful
                     if (++_sprayTick % 3 == 0) _engine.BoostSprays(float.TryParse(r.InjectValue, out var cs) ? cs : 16f); break;
-                case RowKind.TileReach: // tileRangeX/Y + blockRange are recomputed each frame; re-assert
-                    { int v = int.TryParse(r.InjectValue, out var rv) ? rv : 25; _engine.SetTileReach(v, v); break; }
             }
         }
     }
@@ -426,6 +428,7 @@ public sealed class TmlForm : Form
             _scopedDrop.Clear();
             _spawnBoost.Clear();
             _rareSpawn.Clear();
+            _tileReach.Clear();
             _aimbot.Clear();
             try { _rareNpcs = TmlDiscovery.EnumerateRareNpcs(_engine.Proc!.Id, 2); AppendLog($"Loaded {_rareNpcs.Count} rare mobs for the spawn picker."); } catch { _rareNpcs = new(); }
             CacheVitalFields();
@@ -771,9 +774,9 @@ public sealed class TmlForm : Form
                 AppendLog($"{(r.Active ? "ON" : "OFF")}: {r.Desc}");
                 break;
             case RowKind.TileReach:
-                // Player.tileRangeX/Y are static and don't reset — write once on toggle, restore on off.
-                if (r.Active) { int v = int.TryParse(r.InjectValue, out var tv) ? tv : 25; _engine.SetTileReach(v, v); AppendLog($"ON: {r.Desc} → {v} tiles"); }
-                else { _engine.SetTileReach(5, 4); AppendLog($"OFF: {r.Desc} (restored 5/4)"); }
+                // Clean patch of the per-frame reset in ResetEffects (no write-race flicker).
+                if (r.Active) { int v = int.TryParse(r.InjectValue, out var tv) ? tv : 25; _tileReach.Enable(v); AppendLog($"ON: {r.Desc} → {v} tiles"); }
+                else { _tileReach.Disable(); AppendLog($"OFF: {r.Desc} (restored 5/4)"); }
                 break;
             case RowKind.RareSpawn:
                 if (r.Active)
@@ -925,7 +928,7 @@ public sealed class TmlForm : Form
         {
             if (!int.TryParse(text.Trim(), out var sv) || sv < 1) { sv = 5; grow.Cells["value"].Value = "5"; }
             r.InjectValue = sv.ToString();
-            if (r.Active) { _engine.SetTileReach(sv, sv); AppendLog($"Block reach set to {sv} tiles"); }
+            if (r.Active) { _tileReach.SetValue(sv); AppendLog($"Block reach set to {sv} tiles"); }
             SaveConfig();
             return;
         }
@@ -961,7 +964,7 @@ public sealed class TmlForm : Form
             else if (r.Kind == RowKind.SpawnBoost) { _spawnBoost.Disable(); }
             else if (r.Kind == RowKind.RareSpawn) { _rareSpawn.Disable(); }
             else if (r.Kind == RowKind.Aimbot) { _aimbot.Disable(); }
-            else if (r.Kind == RowKind.TileReach) { _engine.SetTileReach(5, 4); }
+            else if (r.Kind == RowKind.TileReach) { _tileReach.Disable(); }
         }
         foreach (var g in new[] { _grid, _buffGrid })
             foreach (DataGridViewRow gr in g.Rows)
@@ -1174,6 +1177,7 @@ public sealed class TmlForm : Form
         try { _scopedDrop.Disable(); } catch { }
         try { _spawnBoost.Disable(); } catch { } // restore vanilla spawn defaults on the target
         try { _rareSpawn.Disable(); } catch { }  // remove the NewNPC cave on the target
+        try { _tileReach.Disable(); } catch { }  // restore the ResetEffects reach defaults
         try { _aimbot.Disable(); } catch { }     // stop overriding the cursor
         _headerFont?.Dispose();
         try { _target.Reset(); } catch { }       // close the shared server handle
