@@ -193,6 +193,10 @@ public static class CheatTable
         EmitGroup(rows, ref lastGroup, "🎒 Inventory");
         rows.Add(new CheatRow { Kind = RowKind.Action, Group = "🎒 Inventory", Desc = "Max Stack All Items (click)" });
 
+        // ---- traveling merchant action ----
+        EmitGroup(rows, ref lastGroup, "🛒 Traveling Merchant");
+        rows.Add(new CheatRow { Kind = RowKind.Action, Group = "🛒 Traveling Merchant", Desc = "Re-roll Traveling Merchant stock (click)" });
+
         // ---- buff toggles, grouped by function (mirrors CT's potion categories) ----
         // Effects like speed/defense/vision/mining are delivered as buffs because the
         // game recomputes the raw Player fields every frame (external freezes can't hold

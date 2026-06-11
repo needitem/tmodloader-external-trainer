@@ -63,6 +63,8 @@ public sealed class TmlForm : Form
     private readonly AimbotPatcher _aimbot;
     // Block-reach extension by patching the per-frame reset in Player.ResetEffects (client-side).
     private readonly TileReachPatcher _tileReach;
+    // Re-rolls the Traveling Merchant's stock on click via a game-thread call cave (client-side).
+    private readonly TravelShopPatcher _travelShop;
     // Renders a world overview highlighting Corruption / Crimson / Hallow (on-demand snapshot).
     private readonly WorldMapScanner _mapScanner;
     private List<(int type, int stars, string name)> _rareNpcs = new();
@@ -101,6 +103,7 @@ public sealed class TmlForm : Form
         _rareSpawn = new RareSpawnPatcher(_target);
         _aimbot = new AimbotPatcher(_engine);
         _tileReach = new TileReachPatcher(_engine);
+        _travelShop = new TravelShopPatcher(_engine);
         _mapScanner = new WorldMapScanner(_engine, _target);
         _engine.Log += AppendLog;
         _btnAttach.Click += (_, _) => DoAttach();
@@ -433,6 +436,7 @@ public sealed class TmlForm : Form
             _spawnBoost.Clear();
             _rareSpawn.Clear();
             _tileReach.Clear();
+            _travelShop.Clear();
             _aimbot.Clear();
             try { _rareNpcs = TmlDiscovery.EnumerateRareNpcs(_engine.Proc!.Id, 2); AppendLog($"Loaded {_rareNpcs.Count} rare mobs for the spawn picker."); } catch { _rareNpcs = new(); }
             CacheVitalFields();
@@ -869,6 +873,10 @@ public sealed class TmlForm : Form
     {
         if (r.Desc.StartsWith("Max Stack"))
             lock (_engine.Sync) AppendLog($"Max-stacked {_engine.MaxStackInventory()} item(s).");
+        else if (r.Desc.StartsWith("Re-roll Traveling"))
+            lock (_engine.Sync) AppendLog(_travelShop.Reroll()
+                ? "Traveling Merchant stock re-rolled — re-open the shop to see new items."
+                : $"Re-roll failed: {_travelShop.Status}");
     }
 
     private void Grid_CellDoubleClick(object? sender, DataGridViewCellEventArgs e)
@@ -1192,6 +1200,7 @@ public sealed class TmlForm : Form
         try { _spawnBoost.Disable(); } catch { } // restore vanilla spawn defaults on the target
         try { _rareSpawn.Disable(); } catch { }  // remove the NewNPC cave on the target
         try { _tileReach.Disable(); } catch { }  // restore the ResetEffects reach defaults
+        try { _travelShop.Clear(); } catch { }   // remove the re-roll call cave
         try { _aimbot.Disable(); } catch { }     // stop overriding the cursor
         _headerFont?.Dispose();
         try { _target.Reset(); } catch { }       // close the shared server handle

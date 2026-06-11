@@ -178,6 +178,8 @@ public static class TmlDiscovery
 
         // Always-crate fishing: hook Projectile.FishingCheck_RollItemDrop(ref FishingAttempt) and force attempt.crate=true.
         AddNamedMethod(runtime, model, "Terraria.Projectile", "FishingCheck_RollItemDrop");
+        AddNamedMethod(runtime, model, "Terraria.Chest", "SetupTravelShop");             // re-roll the Traveling Merchant
+        AddNamedMethod(runtime, model, "Terraria.Main", "DoUpdate_Enter_ToggleChat");    // clean per-frame hook site
         var faType = FindType(runtime, "Terraria.DataStructures.FishingAttempt");
         var crateF = faType?.GetFieldByName("crate");
         if (crateF != null) model.FishingCrateOff = crateF.Offset; // value type: byref offset has no MT header
