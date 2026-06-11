@@ -65,6 +65,8 @@ public sealed class TmlForm : Form
     private readonly TileReachPatcher _tileReach;
     // Re-rolls the Traveling Merchant's stock on click via a game-thread call cave (client-side).
     private readonly TravelShopPatcher _travelShop;
+    // Forces the Traveling Merchant to arrive (SpawnOnPlayer), run on the server process.
+    private readonly TravelMerchantSpawner _merchantSpawn;
     // Renders a world overview highlighting Corruption / Crimson / Hallow (on-demand snapshot).
     private readonly WorldMapScanner _mapScanner;
     private List<(int type, int stars, string name)> _rareNpcs = new();
@@ -104,6 +106,7 @@ public sealed class TmlForm : Form
         _aimbot = new AimbotPatcher(_engine);
         _tileReach = new TileReachPatcher(_engine);
         _travelShop = new TravelShopPatcher(_engine);
+        _merchantSpawn = new TravelMerchantSpawner(_engine, _target);
         _mapScanner = new WorldMapScanner(_engine, _target);
         _engine.Log += AppendLog;
         _btnAttach.Click += (_, _) => DoAttach();
@@ -437,6 +440,7 @@ public sealed class TmlForm : Form
             _rareSpawn.Clear();
             _tileReach.Clear();
             _travelShop.Clear();
+            _merchantSpawn.Clear();
             _aimbot.Clear();
             try { _rareNpcs = TmlDiscovery.EnumerateRareNpcs(_engine.Proc!.Id, 2); AppendLog($"Loaded {_rareNpcs.Count} rare mobs for the spawn picker."); } catch { _rareNpcs = new(); }
             CacheVitalFields();
@@ -874,9 +878,13 @@ public sealed class TmlForm : Form
         if (r.Desc.StartsWith("Max Stack"))
             lock (_engine.Sync) AppendLog($"Max-stacked {_engine.MaxStackInventory()} item(s).");
         else if (r.Desc.StartsWith("Summon Traveling"))
-            lock (_engine.Sync) AppendLog(_travelShop.Summon()
-                ? "Traveling Merchant summoned — he'll arrive shortly with fresh stock."
-                : $"Summon failed: {_travelShop.Status}");
+            lock (_engine.Sync)
+            {
+                _travelShop.Reroll();                 // fresh stock in the host's (client-side) shop view
+                AppendLog(_merchantSpawn.Summon()     // physical arrival — must run on the world/server process
+                    ? "Traveling Merchant summoned — he'll arrive at the next world spawn tick, with fresh stock."
+                    : $"Summon failed: {_merchantSpawn.Status}");
+            }
         else if (r.Desc.StartsWith("Re-roll Traveling"))
             lock (_engine.Sync) AppendLog(_travelShop.Reroll()
                 ? "Traveling Merchant stock re-rolled — re-open the shop to see new items."
@@ -1205,6 +1213,7 @@ public sealed class TmlForm : Form
         try { _rareSpawn.Disable(); } catch { }  // remove the NewNPC cave on the target
         try { _tileReach.Disable(); } catch { }  // restore the ResetEffects reach defaults
         try { _travelShop.Clear(); } catch { }   // remove the re-roll call cave
+        try { _merchantSpawn.Clear(); } catch { } // remove the server-side summon cave
         try { _aimbot.Disable(); } catch { }     // stop overriding the cursor
         _headerFont?.Dispose();
         try { _target.Reset(); } catch { }       // close the shared server handle
