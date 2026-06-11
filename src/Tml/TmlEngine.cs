@@ -229,6 +229,16 @@ public sealed class TmlEngine : IDisposable
         return names.Count == 0 ? "Forest/Surface" : string.Join(", ", names);
     }
 
+    // ---- block/tile reach (Player.tileRangeX/Y statics — the character's "arm reach" for place/mine/use) ----
+    public void SetTileReach(int x, int y)
+    {
+        var m = Mem;
+        if (m == null || Model == null) return;
+        if (Model.TileRangeXAddr != 0) m.WriteInt32((IntPtr)Model.TileRangeXAddr, x);
+        if (Model.TileRangeYAddr != 0) m.WriteInt32((IntPtr)Model.TileRangeYAddr, y);
+    }
+    public bool HasTileReach => Model?.TileRangeXAddr != 0;
+
     // ---- Clentaminator spray range ----
     // Spray projectiles (Projectile.aiStyle == 31) decelerate and expire, capping the Clentaminator's
     // reach. While active, the high-freq writer keeps each of MY sprays alive (timeLeft topped up) and

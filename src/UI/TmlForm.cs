@@ -479,7 +479,7 @@ public sealed class TmlForm : Form
             foreach (var r in _rows)
             {
                 if (r.Kind is RowKind.GroupHeader or RowKind.Action) continue;
-                bool editable = r.Kind is RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost or RowKind.RareSpawn or RowKind.SprayRange;
+                bool editable = r.Kind is RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost or RowKind.RareSpawn or RowKind.SprayRange or RowKind.TileReach;
                 if (!r.Active && !editable) continue;          // inactive non-editable: nothing to remember
                 // Editable rows persist their value even when OFF (prefix "off:") so settings stick.
                 data[r.Desc] = editable ? (r.Active ? "" : "off:") + r.InjectValue
@@ -508,7 +508,7 @@ public sealed class TmlForm : Form
         {
             if (r.Kind is RowKind.GroupHeader or RowKind.Action) continue;
             if (!data.TryGetValue(r.Desc, out var saved)) continue;
-            bool editable = r.Kind is RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost or RowKind.RareSpawn or RowKind.SprayRange;
+            bool editable = r.Kind is RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost or RowKind.RareSpawn or RowKind.SprayRange or RowKind.TileReach;
             bool inactive = saved.StartsWith("off:", StringComparison.Ordinal);
             string val = inactive ? saved[4..] : saved;
 
@@ -605,9 +605,9 @@ public sealed class TmlForm : Form
                 row.Cells["type"].Value = TypeLabel(r);
                 row.Cells["value"].Value = r.Kind == RowKind.Action ? "▶ click On"
                     : r.Kind == RowKind.Value ? (r.FrozenText ?? "—")
-                    : r.Kind is RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost or RowKind.SprayRange ? r.InjectValue
+                    : r.Kind is RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost or RowKind.SprayRange or RowKind.TileReach ? r.InjectValue
                     : "—";
-                row.Cells["value"].ReadOnly = r.Kind is not (RowKind.Value or RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost or RowKind.SprayRange);
+                row.Cells["value"].ReadOnly = r.Kind is not (RowKind.Value or RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost or RowKind.SprayRange or RowKind.TileReach);
             }
         }
         grid.ResumeLayout();
@@ -630,6 +630,7 @@ public sealed class TmlForm : Form
         RowKind.ScopedDrop => "drop(me)",
         RowKind.SpawnBoost => "spawn",
         RowKind.SprayRange => "spray",
+        RowKind.TileReach => "reach",
         RowKind.RareSpawn => "rare▾",
         RowKind.Aimbot => "aim",
         RowKind.BuffClear => "no-debuff",
@@ -763,6 +764,11 @@ public sealed class TmlForm : Form
                 // the high-frequency writer keeps the spray alive + cruising while active.
                 AppendLog($"{(r.Active ? "ON" : "OFF")}: {r.Desc}");
                 break;
+            case RowKind.TileReach:
+                // Player.tileRangeX/Y are static and don't reset — write once on toggle, restore on off.
+                if (r.Active) { int v = int.TryParse(r.InjectValue, out var tv) ? tv : 25; _engine.SetTileReach(v, v); AppendLog($"ON: {r.Desc} → {v} tiles"); }
+                else { _engine.SetTileReach(5, 4); AppendLog($"OFF: {r.Desc} (restored 5/4)"); }
+                break;
             case RowKind.RareSpawn:
                 if (r.Active)
                 {
@@ -848,7 +854,7 @@ public sealed class TmlForm : Form
     {
         if (e.RowIndex < 0) return;
         var grow = _grid.Rows[e.RowIndex];
-        if (grow.Tag is not CheatRow r || r.Kind is not (RowKind.Value or RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost or RowKind.SprayRange)) return;
+        if (grow.Tag is not CheatRow r || r.Kind is not (RowKind.Value or RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost or RowKind.SprayRange or RowKind.TileReach)) return;
         if (_grid.Columns[e.ColumnIndex].Name == "value")
         {
             _grid.BeginEdit(true);
@@ -909,6 +915,14 @@ public sealed class TmlForm : Form
             SaveConfig();
             return;
         }
+        if (r.Kind == RowKind.TileReach)
+        {
+            if (!int.TryParse(text.Trim(), out var sv) || sv < 1) { sv = 5; grow.Cells["value"].Value = "5"; }
+            r.InjectValue = sv.ToString();
+            if (r.Active) { _engine.SetTileReach(sv, sv); AppendLog($"Block reach set to {sv} tiles"); }
+            SaveConfig();
+            return;
+        }
 
         if (r.Kind != RowKind.Value) return;
         lock (_engine.Sync)
@@ -941,6 +955,7 @@ public sealed class TmlForm : Form
             else if (r.Kind == RowKind.SpawnBoost) { _spawnBoost.Disable(); }
             else if (r.Kind == RowKind.RareSpawn) { _rareSpawn.Disable(); }
             else if (r.Kind == RowKind.Aimbot) { _aimbot.Disable(); }
+            else if (r.Kind == RowKind.TileReach) { _engine.SetTileReach(5, 4); }
         }
         foreach (var g in new[] { _grid, _buffGrid })
             foreach (DataGridViewRow gr in g.Rows)

@@ -4,7 +4,7 @@ using TerrariaTrainer.Cheats;
 
 namespace TerrariaTrainer.Tml;
 
-public enum RowKind { GroupHeader, Value, Toggle, Buff, Action, Inject, Fast, UseHook, Tools, Craft, Patch, Vanity, PatchSet, DropMult, Crate, ScopedDrop, BuffClear, PatchInt, InfAmmo, SpawnBoost, RareSpawn, Aimbot, SprayRange }
+public enum RowKind { GroupHeader, Value, Toggle, Buff, Action, Inject, Fast, UseHook, Tools, Craft, Patch, Vanity, PatchSet, DropMult, Crate, ScopedDrop, BuffClear, PatchInt, InfAmmo, SpawnBoost, RareSpawn, Aimbot, SprayRange, TileReach }
 
 /// <summary>A single row in the Cheat-Engine-style table.</summary>
 public sealed class CheatRow
@@ -73,6 +73,13 @@ public static class CheatTable
             {
                 EmitGroup(rows, ref lastGroup, d.Group);
                 rows.Add(new CheatRow { Kind = RowKind.RareSpawn, Group = d.Group, Desc = d.Desc, InjectValue = d.Value ?? "0" });
+                continue;
+            }
+            if (d.Kind.Equals("tilereach", StringComparison.OrdinalIgnoreCase))
+            {
+                if (model.TileRangeXAddr == 0) continue; // static not resolved -> skip
+                EmitGroup(rows, ref lastGroup, d.Group);
+                rows.Add(new CheatRow { Kind = RowKind.TileReach, Group = d.Group, Desc = d.Desc, InjectValue = d.Value ?? "25" });
                 continue;
             }
             if (d.Kind.Equals("sprayrange", StringComparison.OrdinalIgnoreCase))
