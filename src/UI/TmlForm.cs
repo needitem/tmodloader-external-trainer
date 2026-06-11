@@ -319,6 +319,9 @@ public sealed class TmlForm : Form
         g.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Type", Name = "type", ReadOnly = true, Width = 60 });
         g.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Value", Name = "value", Width = 150 });
 
+        // Clicking a header must NOT sort — it scrambles the grouped rows and breaks toggling.
+        foreach (DataGridViewColumn c in g.Columns) c.SortMode = DataGridViewColumnSortMode.NotSortable;
+
         g.CellClick += Grid_CellClick;
     }
 
@@ -339,6 +342,7 @@ public sealed class TmlForm : Form
         _invGrid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Modifier", Name = "modifier", ReadOnly = true, Width = 110, ToolTipText = "Prefix name (e.g. Legendary)." });
         _invGrid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "ID", Name = "type", Width = 70, ToolTipText = "Item type ID. Editable — changing it may need a world reload." });
         _invGrid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Pfx#", Name = "prefix", Width = 55, ToolTipText = "Prefix number. Editable." });
+        foreach (DataGridViewColumn c in _invGrid.Columns) c.SortMode = DataGridViewColumnSortMode.NotSortable;
         _invGrid.CellEndEdit += InvGrid_CellEndEdit;
     }
 
