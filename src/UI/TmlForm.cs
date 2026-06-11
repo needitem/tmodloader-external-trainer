@@ -177,7 +177,7 @@ public sealed class TmlForm : Form
     private static readonly RowKind[] WriterKinds =
     {
         RowKind.Value, RowKind.Toggle, RowKind.Inject, RowKind.Fast,
-        RowKind.Tools, RowKind.Craft, RowKind.BuffClear, RowKind.InfAmmo, RowKind.SprayRange,
+        RowKind.Tools, RowKind.Craft, RowKind.BuffClear, RowKind.InfAmmo, RowKind.SprayRange, RowKind.TileReach,
     };
 
     /// <summary>True if any write-cheat is toggled on (cheap snapshot check, no memory access).</summary>
@@ -208,6 +208,8 @@ public sealed class TmlForm : Form
                 case RowKind.InfAmmo: _engine.TopAmmo(); break;
                 case RowKind.SprayRange: // ~once/frame is plenty; scanning the projectile array each 5ms is wasteful
                     if (++_sprayTick % 3 == 0) _engine.BoostSprays(float.TryParse(r.InjectValue, out var cs) ? cs : 16f); break;
+                case RowKind.TileReach: // tileRangeX/Y + blockRange are recomputed each frame; re-assert
+                    { int v = int.TryParse(r.InjectValue, out var rv) ? rv : 25; _engine.SetTileReach(v, v); break; }
             }
         }
     }

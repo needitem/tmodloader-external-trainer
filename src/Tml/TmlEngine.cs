@@ -229,13 +229,20 @@ public sealed class TmlEngine : IDisposable
         return names.Count == 0 ? "Forest/Surface" : string.Join(", ", names);
     }
 
-    // ---- block/tile reach (Player.tileRangeX/Y statics — the character's "arm reach" for place/mine/use) ----
+    // ---- block/tile reach (the character's "arm reach" for place/mine/use) ----
+    // Effective reach = Player.tileRangeX(static) + Player.blockRange(per-player). blockRange is the
+    // Extendo-Grip bonus and is reset every frame in ResetEffects, so it (and the statics) must be
+    // re-asserted by the high-freq writer to actually hold.
+    private int _blockRangeOff = -2;
     public void SetTileReach(int x, int y)
     {
         var m = Mem;
         if (m == null || Model == null) return;
         if (Model.TileRangeXAddr != 0) m.WriteInt32((IntPtr)Model.TileRangeXAddr, x);
         if (Model.TileRangeYAddr != 0) m.WriteInt32((IntPtr)Model.TileRangeYAddr, y);
+        if (_blockRangeOff == -2) _blockRangeOff = FieldOffset("blockRange");
+        var pb = PlayerBase();
+        if (pb != IntPtr.Zero && _blockRangeOff >= 0) m.WriteInt32((IntPtr)(pb.ToInt64() + _blockRangeOff), Math.Max(x, y));
     }
     public bool HasTileReach => Model?.TileRangeXAddr != 0;
 
