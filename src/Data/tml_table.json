@@ -33,7 +33,7 @@
   { "group": "💍 Accessory Effects (code injection)", "desc": "Vanity/Social accessory slots give FUNCTIONAL effects (7 cosmetic slots)", "kind": "vanity" },
 
   { "group": "🛡️ Survival (code injection)", "desc": "GOD MODE — take no damage (patches all Player.Hurt)", "kind": "patchset", "method": "Player.Hurt:zero" },
-  { "group": "🛡️ Survival (code injection)", "desc": "Infinite Mana — no mana cost (patches CheckMana/PayMana)", "kind": "patchset", "method": "Player.CheckMana:true;Player.ItemCheck_PayMana:zero" },
+  { "group": "🛡️ Survival (code injection)", "desc": "Infinite Mana — no mana cost (patches CheckMana/PayMana)", "kind": "patchset", "method": "Player.CheckMana:true;Player.ItemCheck_PayMana:true" },
   { "group": "🏃 Movement (code injection)", "desc": "Infinite Flight (wings never run out)", "field": "wingTime", "kind": "fast", "value": "1000000" },
   { "group": "🏃 Movement (code injection)", "desc": "Infinite Rocket Boots / Spectre Boots flight", "field": "rocketTime", "kind": "fast", "value": "0" },
   { "group": "🏃 Movement (code injection)", "desc": "No Drowning (breath never depletes)", "field": "breath", "kind": "fast", "value": "65000" },
