@@ -1592,6 +1592,23 @@ if (mode == "fields")
     return 0;
 }
 
+if (mode == "modplayers") // dump Player.modPlayers[] entry types (find CalamityPlayer's index)
+{
+    using var engine = new TmlEngine();
+    engine.Attach();
+    var pb = engine.PlayerBase();
+    if (pb == IntPtr.Zero) { Console.WriteLine("No world."); return 0; }
+    var mm = engine.Mem!;
+    IntPtr arr = mm.ReadPtr64((IntPtr)(pb.ToInt64() + 0x2B0)); // Player.modPlayers
+    if (arr == IntPtr.Zero) { Console.WriteLine("modPlayers null"); return 0; }
+    int len = mm.ReadInt32((IntPtr)(arr.ToInt64() + 8));
+    Console.WriteLine($"modPlayers len={len}");
+    var addrs = new List<ulong>();
+    for (int i = 0; i < Math.Min(len, 2000); i++) addrs.Add((ulong)mm.ReadInt64((IntPtr)(arr.ToInt64() + 0x10 + i * 8)));
+    ClrDiscovery.DumpObjectTypes(proc.Id, addrs);
+    return 0;
+}
+
 if (mode == "contentid") // contentid <typeNameSubstr> — ModBuff/ModItem singleton's assigned Type id
 {
     ClrDiscovery.FindContentId(proc.Id, args.Length > 1 ? args[1] : "GrapeBeer");

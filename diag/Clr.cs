@@ -442,6 +442,21 @@ internal static class ClrDiscovery
         Console.WriteLine($"total: {n}");
     }
 
+    /// <summary>Print the runtime type of each object address (e.g. the entries of Player.modPlayers[]).</summary>
+    public static void DumpObjectTypes(int pid, IReadOnlyList<ulong> addrs)
+    {
+        using var dt = DataTarget.CreateSnapshotAndAttach(pid);
+        using var runtime = dt.ClrVersions.First().CreateRuntime();
+        for (int i = 0; i < addrs.Count; i++)
+        {
+            if (addrs[i] == 0) continue;
+            string nm = "?"; try { nm = runtime.Heap.GetObjectType(addrs[i])?.Name ?? "?"; } catch { }
+            if (nm.Contains("Calamity", StringComparison.OrdinalIgnoreCase) || nm.Contains("CalPlayer"))
+                Console.WriteLine($"  [{i}] {nm}   <-- (addr 0x{addrs[i]:X})");
+        }
+        Console.WriteLine($"({addrs.Count} entries scanned; only Calamity shown)");
+    }
+
     /// <summary>Find a ModBuff/ModItem singleton on the heap whose type name contains the substring and print its
     /// assigned content id (the inherited <c>Type</c> int) — e.g. a Calamity buff's runtime buff ID.</summary>
     public static void FindContentId(int pid, string sub)

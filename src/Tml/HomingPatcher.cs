@@ -21,12 +21,14 @@ public sealed class HomingPatcher
     private volatile bool _enabled;
     private string _status = "off";
 
-    // Preferred path: if Calamity is loaded, grant its "Grape Beer" buff — Calamity's own code then homes
-    // every projectile natively (no external velocity steering). _buffId: -1 = not resolved yet, 0 = not
-    // available (no Calamity) → fall back to external steering, >0 = the live buff id to grant.
-    private volatile int _buffId = -1;
+    // Preferred path: if Calamity is loaded, flip its per-player homing flag (CalamityPlayer.grapeBeer)
+    // directly each tick — Calamity's own code then homes every projectile natively. We set the FLAG, not
+    // the Grape Beer BUFF, so there's no alcohol damage penalty. _calState: -1 = not resolved yet, 0 = not
+    // available (no Calamity) → fall back to external steering, 1 = resolved (use the flag).
+    private volatile int _calState = -1;
     private volatile bool _resolving;
-    private int _grantTick;
+    private int _mpOff, _gbOff, _calIdx = -1;
+    private ulong _calMT;
 
     private const int ArrayData = 0x10;       // MethodTable(8) + length(8)
     private const int MaxProj = 1000;         // Terraria's Main.maxProjectiles
@@ -46,28 +48,59 @@ public sealed class HomingPatcher
     public bool Enabled => _enabled;
     public string Status => _status;
 
-    public void Enable() { _enabled = true; ResolveBuffAsync(); }
+    public void Enable() { _enabled = true; ResolveCalamityAsync(); }
     public void Disable()
     {
         _enabled = false;
-        if (_buffId > 0) { try { _engine.ClearBuff(_buffId); } catch { } } // stop the native homing immediately
+        if (_calState == 1) { try { WriteFlag(0); } catch { } } // clear the flag so homing stops promptly
         _status = "off";
     }
-    public void Clear() { _cachedModel = null; _buffId = -1; } // new process → re-resolve the (load-dependent) buff id
+    public void Clear() { _cachedModel = null; _calState = -1; _calIdx = -1; } // new process → re-resolve
 
-    /// <summary>One-time, off-thread resolve of Calamity's Grape Beer buff id (a full heap walk).</summary>
-    private void ResolveBuffAsync()
+    /// <summary>One-time, off-thread resolve of Calamity's homing flag layout (cheap metadata lookup).</summary>
+    private void ResolveCalamityAsync()
     {
-        if (_buffId != -1 || _resolving) return;
+        if (_calState != -1 || _resolving) return;
         int pid = _engine.Proc?.Id ?? -1;
         if (pid < 0) return;
         _resolving = true;
         System.Threading.Tasks.Task.Run(() =>
         {
-            int id = 0;
-            try { id = TmlDiscovery.ResolveBuffIdByType(pid, "GrapeBeerBuff"); } catch { }
-            _buffId = id; _resolving = false;
+            try
+            {
+                var r = TmlDiscovery.ResolveCalamityHoming(pid);
+                if (r is { } v) { _mpOff = v.mpOff; _gbOff = v.gbOff; _calMT = v.calMT; _calState = 1; }
+                else _calState = 0;
+            }
+            catch { _calState = 0; }
+            _resolving = false;
         });
+    }
+
+    /// <summary>Set CalamityPlayer.grapeBeer for the local player (the homing trigger). Re-reads the pointer
+    /// chain each call so a GC move is harmless; caches the modPlayers slot, re-verifying its MethodTable.</summary>
+    private bool WriteFlag(byte val)
+    {
+        var m = _engine.Mem; IntPtr pb = _engine.PlayerBase();
+        if (m == null || pb == IntPtr.Zero || _mpOff == 0) return false;
+        IntPtr arr = m.ReadPtr64((IntPtr)(pb.ToInt64() + _mpOff));
+        if (arr == IntPtr.Zero) return false;
+        int len = m.ReadInt32((IntPtr)(arr.ToInt64() + 8));
+        if (len <= 0 || len > 4000) return false;
+        IntPtr cur = IntPtr.Zero;
+        bool Slot(int i)
+        {
+            cur = m.ReadPtr64((IntPtr)(arr.ToInt64() + ArrayData + i * 8));
+            return cur != IntPtr.Zero && (ulong)m.ReadInt64(cur) == _calMT; // MethodTable at obj+0
+        }
+        if (_calIdx < 0 || _calIdx >= len || !Slot(_calIdx))
+        {
+            _calIdx = -1;
+            for (int i = 0; i < len; i++) if (Slot(i)) { _calIdx = i; break; }
+            if (_calIdx < 0) return false;
+        }
+        m.WriteByte((IntPtr)(cur.ToInt64() + _gbOff), val);
+        return true;
     }
 
     /// <summary>Called from the high-frequency writer loop (already holds engine.Sync).</summary>
@@ -76,13 +109,11 @@ public sealed class HomingPatcher
         if (!_enabled) return;
         try
         {
-            if (_buffId > 0)
+            if (_calState == 1)
             {
-                // Native Calamity homing: keep the Grape Beer buff topped up (it makes every projectile home).
-                if (_grantTick++ % 100 == 0) _engine.GrantBuff(_buffId, 1800); // ~every 0.5s at the 5ms tick
-                _status = "homing via Calamity Grape Beer buff";
+                _status = WriteFlag(1) ? "homing — Calamity native (grapeBeer flag, no buff penalty)" : "Calamity homing: player not found";
             }
-            else if (_buffId == 0) Home();            // no Calamity → external velocity steering
+            else if (_calState == 0) Home();          // no Calamity → external velocity steering
             else { Home(); _status = "checking for Calamity… (steering meanwhile)"; } // still resolving
         }
         catch { /* transient: world swap / GC move */ }

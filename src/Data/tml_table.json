@@ -71,5 +71,5 @@
   { "group": "🎯 Aimbot (weapons)", "desc": "Auto-Aim Boss Priority — aim the on-screen boss first (else nearest enemy) while you hold attack (pickaxes/axes/hammers ignored)", "kind": "aimbot", "method": "boss" },
   { "group": "🎯 Aimbot (weapons)", "desc": "Auto-Aim Nearest to Cursor — snap to the enemy closest to your mouse (move the cursor to switch targets); hold attack", "kind": "aimbot", "method": "cursor" },
 
-  { "group": "🚀 Homing", "desc": "Homing Projectiles — on Calamity, grants the Grape Beer buff so the game homes your shots natively; otherwise steers them to the nearest enemy (bobbers/hooks/minions excluded)", "kind": "homing" }
+  { "group": "🚀 Homing", "desc": "Homing Projectiles — on Calamity, flips the grapeBeer homing flag so the game homes your shots natively (no buff = no damage penalty); otherwise steers them to the nearest enemy (bobbers/hooks/minions excluded)", "kind": "homing" }
 ]

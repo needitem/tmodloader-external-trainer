@@ -360,6 +360,29 @@ public static class TmlDiscovery
         return result;
     }
 
+    /// <summary>Resolve what's needed to flip Calamity's per-player homing flag directly (no buff, so no
+    /// damage penalty): the <c>Player.modPlayers</c> array offset, the <c>CalamityPlayer.grapeBeer</c> field
+    /// offset, and CalamityPlayer's MethodTable (to locate its slot in the array). Returns null if Calamity
+    /// isn't loaded. Pure metadata lookup — no heap walk.</summary>
+    public static (int mpOff, int gbOff, ulong calMT)? ResolveCalamityHoming(int pid)
+    {
+        try
+        {
+            using var dt = DataTarget.CreateSnapshotAndAttach(pid);
+            var clr = dt.ClrVersions.FirstOrDefault();
+            if (clr == null) return null;
+            using var runtime = clr.CreateRuntime();
+            var playerT = FindType(runtime, "Terraria.Player");
+            var calT = FindType(runtime, "CalamityMod.CalPlayer.CalamityPlayer");
+            if (playerT == null || calT == null) return null; // no Calamity
+            var mpF = playerT.GetFieldByName("modPlayers");
+            var gbF = calT.GetFieldByName("grapeBeer");
+            if (mpF == null || gbF == null) return null;
+            return (mpF.Offset + HeaderSize, gbF.Offset + HeaderSize, calT.MethodTable);
+        }
+        catch { return null; }
+    }
+
     /// <summary>Resolve a modded buff/content id at runtime by heap-scanning for the ModBuff singleton whose
     /// type name contains <paramref name="typeSub"/> and reading its assigned <c>Type</c> (the buff id). Modded
     /// ids vary by mod set / load order, so they must be resolved live, never hardcoded. 0 if absent (e.g. no
