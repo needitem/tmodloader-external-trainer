@@ -1592,6 +1592,19 @@ if (mode == "fields")
     return 0;
 }
 
+if (mode == "projfields")
+{
+    using var engine = new TmlEngine();
+    engine.Attach();
+    Console.WriteLine("Projectile fields (offset from object base):");
+    foreach (var kv in engine.Model!.ProjectileFields.OrderBy(k => k.Value))
+        Console.WriteLine($"  {kv.Key,-12} +0x{kv.Value:X}");
+    Console.WriteLine("\nNPC position/active for cross-check:");
+    foreach (var n in new[] { "active", "position", "width", "height", "friendly", "townNPC", "life" })
+        if (engine.Model!.NpcFields.TryGetValue(n, out var o)) Console.WriteLine($"  npc.{n,-10} +0x{o:X}");
+    return 0;
+}
+
 if (mode == "tmlwrite")
 {
     using var engine = new TmlEngine();

@@ -263,6 +263,17 @@ public static class TmlDiscovery
             }
         }
 
+        var projType = FindType(runtime, "Terraria.Projectile");
+        if (projType != null)
+        {
+            foreach (var name in new[] { "active", "position", "velocity", "width", "height",
+                "owner", "friendly", "hostile", "damage", "aiStyle", "bobber", "minion", "sentry", "type" })
+            {
+                var f = projType.GetFieldByName(name);
+                if (f != null) model.ProjectileFields[name] = f.Offset + HeaderSize;
+            }
+        }
+
         return model;
     }
 

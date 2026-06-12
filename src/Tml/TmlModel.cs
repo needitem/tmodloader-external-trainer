@@ -47,6 +47,7 @@ public sealed class TmlModel
     public ulong GameZoomTarget;  // &Main.GameZoomTarget (float — settings zoom, fallback)
     public int ViewZoomOff = -1;  // SpriteViewMatrix zoom (Vector2) field offset
     public Dictionary<string, int> NpcFields = new(); // active/position/width/height/friendly/boss/life/...
+    public Dictionary<string, int> ProjectileFields = new(); // active/position/velocity/owner/friendly/damage/bobber/...
     // Aiming uses the player->target world direction + the OS cursor, so only the NPC array and
     // its position/active offsets are required (mouse/screen statics are no longer needed).
     public bool AimbotReady => NpcArray != 0
