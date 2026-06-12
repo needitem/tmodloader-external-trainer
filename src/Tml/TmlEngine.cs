@@ -318,6 +318,22 @@ public sealed class TmlEngine : IDisposable
 
     public IntPtr BuffSlot(IntPtr arr, int i) => (IntPtr)(arr.ToInt64() + ArrayData + i * 4);
 
+    /// <summary>Apply (or refresh) a buff by id on the local player — sets its timer if already present,
+    /// else drops it into the first empty slot. Returns false if the buff arrays aren't available.</summary>
+    public bool GrantBuff(int buffId, int duration)
+    {
+        if (buffId <= 0) return false;
+        var (id, tm, len) = BuffArrays();
+        if (id == IntPtr.Zero || tm == IntPtr.Zero || len <= 0) return false;
+        var m = Mem!; int slots = Math.Min(len, 256);
+        for (int i = 0; i < slots; i++)
+            if (m.ReadInt32(BuffSlot(id, i)) == buffId) { m.WriteInt32(BuffSlot(tm, i), duration); return true; }
+        for (int i = 0; i < slots; i++)
+            if (m.ReadInt32(BuffSlot(id, i)) == 0)
+            { m.WriteInt32(BuffSlot(id, i), buffId); m.WriteInt32(BuffSlot(tm, i), duration); return true; }
+        return false;
+    }
+
     /// <summary>Remove a buff (by id) from the local player's buff array. Called at high freq to
     /// suppress short-lived debuffs (Mana Sickness, etc.) effectively the moment they're applied.</summary>
     public void ClearBuff(int buffId)

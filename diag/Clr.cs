@@ -442,6 +442,48 @@ internal static class ClrDiscovery
         Console.WriteLine($"total: {n}");
     }
 
+    /// <summary>Find a ModBuff/ModItem singleton on the heap whose type name contains the substring and print its
+    /// assigned content id (the inherited <c>Type</c> int) — e.g. a Calamity buff's runtime buff ID.</summary>
+    public static void FindContentId(int pid, string sub)
+    {
+        using var dt = DataTarget.CreateSnapshotAndAttach(pid);
+        using var runtime = dt.ClrVersions.First().CreateRuntime();
+        var seen = new HashSet<ulong>();
+        foreach (var obj in runtime.Heap.EnumerateObjects())
+        {
+            var t = obj.Type;
+            if (t?.Name == null || !t.Name.Contains(sub, StringComparison.OrdinalIgnoreCase)) continue;
+            if (!seen.Add(t.MethodTable)) continue;
+            int id = -1;
+            foreach (var fn in new[] { "<Type>k__BackingField", "Type" })
+            { try { var f = t.GetFieldByName(fn); if (f != null) { id = f.Read<int>(obj.Address, false); break; } } catch { } }
+            Console.WriteLine($"  {t.Name}  Type={(id < 0 ? "?" : id.ToString())}");
+        }
+    }
+
+    /// <summary>Scan EVERY type in every module for a field (instance OR static) whose name contains the substring.</summary>
+    public static void FindFieldEverywhere(int pid, string sub)
+    {
+        using var dt = DataTarget.CreateSnapshotAndAttach(pid);
+        using var runtime = dt.ClrVersions.First().CreateRuntime();
+        int n = 0;
+        foreach (var mod in runtime.EnumerateModules())
+        {
+            foreach (var (mt, _) in mod.EnumerateTypeDefToMethodTableMap())
+            {
+                ClrType? t; try { t = runtime.GetTypeByMethodTable(mt); } catch { continue; }
+                if (t?.Name == null) continue;
+                foreach (var f in t.Fields)
+                    if (f.Name != null && f.Name.Contains(sub, StringComparison.OrdinalIgnoreCase))
+                    { Console.WriteLine($"  [inst] {t.Name}.{f.Name}  +0x{f.Offset + 8:X3}  {f.Type?.Name}"); n++; }
+                foreach (var f in t.StaticFields)
+                    if (f.Name != null && f.Name.Contains(sub, StringComparison.OrdinalIgnoreCase))
+                    { Console.WriteLine($"  [stat] {t.Name}.{f.Name}  {f.Type?.Name}"); n++; }
+            }
+        }
+        Console.WriteLine($"total: {n}");
+    }
+
     public static void ListTypeFields(int pid, string typeName, string sub)
     {
         using var dt = DataTarget.CreateSnapshotAndAttach(pid);

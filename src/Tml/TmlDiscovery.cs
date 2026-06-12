@@ -360,6 +360,34 @@ public static class TmlDiscovery
         return result;
     }
 
+    /// <summary>Resolve a modded buff/content id at runtime by heap-scanning for the ModBuff singleton whose
+    /// type name contains <paramref name="typeSub"/> and reading its assigned <c>Type</c> (the buff id). Modded
+    /// ids vary by mod set / load order, so they must be resolved live, never hardcoded. 0 if absent (e.g. no
+    /// Calamity). One full heap walk — call off the hot path (once, on a background thread).</summary>
+    public static int ResolveBuffIdByType(int pid, string typeSub)
+    {
+        try
+        {
+            using var dt = DataTarget.CreateSnapshotAndAttach(pid);
+            var clr = dt.ClrVersions.FirstOrDefault();
+            if (clr == null) return 0;
+            using var runtime = clr.CreateRuntime();
+            foreach (var obj in runtime.Heap.EnumerateObjects())
+            {
+                var t = obj.Type;
+                if (t?.Name == null || !t.Name.Contains(typeSub, StringComparison.OrdinalIgnoreCase)) continue;
+                foreach (var fn in new[] { "<Type>k__BackingField", "Type" })
+                {
+                    var f = t.GetFieldByName(fn);
+                    if (f == null) continue;
+                    try { int id = f.Read<int>(obj.Address, false); if (id > 0) return id; } catch { }
+                }
+            }
+        }
+        catch { }
+        return 0;
+    }
+
     /// <summary>Resolve a single method's live native address, disambiguating overloads by a substring of
     /// the signature (e.g. "DropAttemptInfo" to pick the rule-based CommonCode.DropItem). Returns 0 if not
     /// found / not yet jitted.</summary>

@@ -21,6 +21,13 @@ public sealed class HomingPatcher
     private volatile bool _enabled;
     private string _status = "off";
 
+    // Preferred path: if Calamity is loaded, grant its "Grape Beer" buff — Calamity's own code then homes
+    // every projectile natively (no external velocity steering). _buffId: -1 = not resolved yet, 0 = not
+    // available (no Calamity) → fall back to external steering, >0 = the live buff id to grant.
+    private volatile int _buffId = -1;
+    private volatile bool _resolving;
+    private int _grantTick;
+
     private const int ArrayData = 0x10;       // MethodTable(8) + length(8)
     private const int MaxProj = 1000;         // Terraria's Main.maxProjectiles
     private const int MaxNpcs = 200;          // Main.maxNPCs
@@ -39,15 +46,46 @@ public sealed class HomingPatcher
     public bool Enabled => _enabled;
     public string Status => _status;
 
-    public void Enable() => _enabled = true;
-    public void Disable() { _enabled = false; _status = "off"; }
-    public void Clear() { _cachedModel = null; }
+    public void Enable() { _enabled = true; ResolveBuffAsync(); }
+    public void Disable()
+    {
+        _enabled = false;
+        if (_buffId > 0) { try { _engine.ClearBuff(_buffId); } catch { } } // stop the native homing immediately
+        _status = "off";
+    }
+    public void Clear() { _cachedModel = null; _buffId = -1; } // new process → re-resolve the (load-dependent) buff id
+
+    /// <summary>One-time, off-thread resolve of Calamity's Grape Beer buff id (a full heap walk).</summary>
+    private void ResolveBuffAsync()
+    {
+        if (_buffId != -1 || _resolving) return;
+        int pid = _engine.Proc?.Id ?? -1;
+        if (pid < 0) return;
+        _resolving = true;
+        System.Threading.Tasks.Task.Run(() =>
+        {
+            int id = 0;
+            try { id = TmlDiscovery.ResolveBuffIdByType(pid, "GrapeBeerBuff"); } catch { }
+            _buffId = id; _resolving = false;
+        });
+    }
 
     /// <summary>Called from the high-frequency writer loop (already holds engine.Sync).</summary>
     public void Tick()
     {
         if (!_enabled) return;
-        try { Home(); } catch { /* transient: world swap / GC move */ }
+        try
+        {
+            if (_buffId > 0)
+            {
+                // Native Calamity homing: keep the Grape Beer buff topped up (it makes every projectile home).
+                if (_grantTick++ % 100 == 0) _engine.GrantBuff(_buffId, 1800); // ~every 0.5s at the 5ms tick
+                _status = "homing via Calamity Grape Beer buff";
+            }
+            else if (_buffId == 0) Home();            // no Calamity → external velocity steering
+            else { Home(); _status = "checking for Calamity… (steering meanwhile)"; } // still resolving
+        }
+        catch { /* transient: world swap / GC move */ }
     }
 
     private void Home()

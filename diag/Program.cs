@@ -1592,6 +1592,18 @@ if (mode == "fields")
     return 0;
 }
 
+if (mode == "contentid") // contentid <typeNameSubstr> — ModBuff/ModItem singleton's assigned Type id
+{
+    ClrDiscovery.FindContentId(proc.Id, args.Length > 1 ? args[1] : "GrapeBeer");
+    return 0;
+}
+
+if (mode == "scanfields") // scanfields <substr> — every type's fields matching substr
+{
+    ClrDiscovery.FindFieldEverywhere(proc.Id, args.Length > 1 ? args[1] : "homing");
+    return 0;
+}
+
 if (mode == "listfields") // listfields <sub> <type>
 {
     ClrDiscovery.ListFields(proc.Id, args.Length > 1 ? args[1] : "", args.Length > 2 ? args[2] : "Terraria.Projectile");
