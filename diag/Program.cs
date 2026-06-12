@@ -1592,6 +1592,12 @@ if (mode == "fields")
     return 0;
 }
 
+if (mode == "listfields") // listfields <sub> <type>
+{
+    ClrDiscovery.ListFields(proc.Id, args.Length > 1 ? args[1] : "", args.Length > 2 ? args[2] : "Terraria.Projectile");
+    return 0;
+}
+
 if (mode == "projfields")
 {
     using var engine = new TmlEngine();

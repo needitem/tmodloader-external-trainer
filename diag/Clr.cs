@@ -631,6 +631,19 @@ internal static class ClrDiscovery
         public override void Write(string text, Iced.Intel.FormatterTextKind kind) => _sb.Append(text);
     }
 
+    public static void ListFields(int pid, string sub, string typeName)
+    {
+        using var dt = DataTarget.CreateSnapshotAndAttach(pid);
+        using var runtime = dt.ClrVersions.First().CreateRuntime();
+        var t = FindType(runtime, typeName);
+        if (t == null) { Console.WriteLine($"{typeName} not found"); return; }
+        foreach (var f in t.Fields)
+        {
+            if (f.Name == null || (sub.Length > 0 && !f.Name.Contains(sub, StringComparison.OrdinalIgnoreCase))) continue;
+            Console.WriteLine($"  {f.Name,-22} +0x{f.Offset + 8:X3}  {f.Type?.Name}");
+        }
+    }
+
     public static void ListMethods(int pid, string sub, string typeName = "Terraria.Player")
     {
         using var dt = DataTarget.CreateSnapshotAndAttach(pid);

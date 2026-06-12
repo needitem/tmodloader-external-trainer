@@ -26,6 +26,7 @@ public sealed class HomingPatcher
     private const int MaxNpcs = 200;          // Main.maxNPCs
     private const float MaxRange = 2000f;     // only home onto an enemy within this many px
     private const float MinSpeed = 5f;        // don't let a just-spawned (near-zero vel) projectile stall
+    private const float Turn = 0.10f;         // per-tick blend toward the target dir (a curve, not a hard snap)
 
     // cached offsets (resolved once per model)
     private TmlModel? _cachedModel;
@@ -94,13 +95,25 @@ public sealed class HomingPatcher
             if (best < 0) continue;
 
             float vx = BitConverter.ToSingle(_projBuf, _pVel), vy = BitConverter.ToSingle(_projBuf, _pVel + 4);
-            float speed = (float)Math.Sqrt(vx * vx + vy * vy);
-            if (speed < MinSpeed) speed = MinSpeed;
+            float vlen = (float)Math.Sqrt(vx * vx + vy * vy);
+            float speed = vlen < MinSpeed ? MinSpeed : vlen;
             float tx = _ex[best] - cx, ty = _ey[best] - cy;
             float tl = (float)Math.Sqrt(tx * tx + ty * ty);
             if (tl < 1f) continue;
-            m.WriteFloat((IntPtr)(b + _pVel), tx / tl * speed);
-            m.WriteFloat((IntPtr)(b + _pVel + 4), ty / tl * speed);
+            float tdx = tx / tl, tdy = ty / tl;                 // unit direction to the enemy
+            // Gradually curve toward the target (natural homing arc) instead of snapping the velocity
+            // straight at it. With no usable current direction (just spawned), launch toward the target.
+            float ndx, ndy;
+            if (vlen < 0.01f) { ndx = tdx; ndy = tdy; }
+            else
+            {
+                float cdx = vx / vlen, cdy = vy / vlen;          // current unit direction
+                float bx = cdx + (tdx - cdx) * Turn, by = cdy + (tdy - cdy) * Turn;
+                float bl = (float)Math.Sqrt(bx * bx + by * by);
+                if (bl < 0.0001f) { ndx = tdx; ndy = tdy; } else { ndx = bx / bl; ndy = by / bl; }
+            }
+            m.WriteFloat((IntPtr)(b + _pVel), ndx * speed);
+            m.WriteFloat((IntPtr)(b + _pVel + 4), ndy * speed);
             steered++;
         }
         _status = steered > 0 ? $"homing {steered} projectile(s) → {ne} enemies" : $"{ne} enemies, no weapon projectiles out";
