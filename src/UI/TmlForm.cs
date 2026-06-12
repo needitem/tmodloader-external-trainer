@@ -63,8 +63,6 @@ public sealed class TmlForm : Form
     private readonly DropMultPatcher _dropMult;
     // Auto-aim cursor weapons at the nearest enemy / boss (runs in the high-freq writer loop).
     private readonly AimbotPatcher _aimbot;
-    // Steer every weapon projectile toward the nearest enemy (runs in the high-freq writer loop).
-    private readonly HomingPatcher _homing;
     // Block-reach extension by patching the per-frame reset in Player.ResetEffects (client-side).
     private readonly TileReachPatcher _tileReach;
     // Raises the summon-minion cap by patching the per-frame reset in Player.ResetEffects (client-side).
@@ -115,7 +113,6 @@ public sealed class TmlForm : Form
         _rareSpawn = new RareSpawnPatcher(_target);
         _dropMult = new DropMultPatcher(_target);
         _aimbot = new AimbotPatcher(_engine);
-        _homing = new HomingPatcher(_engine);
         _tileReach = new TileReachPatcher(_engine);
         _maxMinions = new MaxMinionsPatcher(_engine);
         _travelShop = new TravelShopPatcher(_engine);
@@ -186,13 +183,13 @@ public sealed class TmlForm : Form
         {
             while (_writerRun)
             {
-                bool active = _engine.Attached && (HasActiveWrites() || _aimbot.Enabled || _homing.Enabled);
+                bool active = _engine.Attached && (HasActiveWrites() || _aimbot.Enabled);
                 if (active && !hiRes) { timeBeginPeriod(1); hiRes = true; }
                 else if (!active && hiRes) { timeEndPeriod(1); hiRes = false; }
 
                 if (active)
                 {
-                    try { lock (_engine.Sync) { AssertActiveWrites(); _aimbot.Tick(); _homing.Tick(); } }
+                    try { lock (_engine.Sync) { AssertActiveWrites(); _aimbot.Tick(); } }
                     catch { /* transient (process gone, list swap) */ }
                 }
                 Thread.Sleep(active ? 5 : 33);
@@ -460,7 +457,6 @@ public sealed class TmlForm : Form
             _travelShop.Clear();
             _serverCaller.Clear();
             _aimbot.Clear();
-            _homing.Clear();
             try { _rareNpcs = TmlDiscovery.EnumerateRareNpcs(_engine.Proc!.Id, 2); AppendLog($"Loaded {_rareNpcs.Count} rare mobs for the spawn picker."); } catch { _rareNpcs = new(); }
             CacheVitalFields();
             lock (_engine.Sync) LoadAndApplyConfig(); // restore previously-enabled cheats
@@ -803,10 +799,6 @@ public sealed class TmlForm : Form
                 ApplyAimbot();
                 AppendLog($"{(r.Active ? "ON" : "OFF")}: {r.Desc}" + (r.Active ? " (hold attack to auto-aim)" : ""));
                 break;
-            case RowKind.Homing:
-                if (r.Active) _homing.Enable(); else _homing.Disable();
-                AppendLog($"{(r.Active ? "ON" : "OFF")}: {r.Desc}");
-                break;
             case RowKind.BuffClear:
                 // the high-frequency writer removes the buff each tick while active.
                 AppendLog($"{(r.Active ? "Enabled" : "Disabled")} {r.Desc}");
@@ -1016,7 +1008,6 @@ public sealed class TmlForm : Form
             else if (r.Kind == RowKind.SpawnBoost) { _spawnBoost.Disable(); }
             else if (r.Kind == RowKind.RareSpawn) { _rareSpawn.Disable(); }
             else if (r.Kind == RowKind.Aimbot) { _aimbot.Disable(); }
-            else if (r.Kind == RowKind.Homing) { _homing.Disable(); }
             else if (r.Kind == RowKind.TileReach) { _tileReach.Disable(); }
             else if (r.Kind == RowKind.MaxMinions) { _maxMinions.Disable(); }
         }
