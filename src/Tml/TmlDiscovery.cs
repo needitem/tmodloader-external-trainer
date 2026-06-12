@@ -349,6 +349,27 @@ public static class TmlDiscovery
         return result;
     }
 
+    /// <summary>Resolve a single method's live native address, disambiguating overloads by a substring of
+    /// the signature (e.g. "DropAttemptInfo" to pick the rule-based CommonCode.DropItem). Returns 0 if not
+    /// found / not yet jitted.</summary>
+    public static ulong ResolveMethodAddr(int pid, string type, string method, string? sigContains = null)
+    {
+        try
+        {
+            using var dt = DataTarget.CreateSnapshotAndAttach(pid);
+            var clr = dt.ClrVersions.FirstOrDefault();
+            if (clr == null) return 0;
+            using var runtime = clr.CreateRuntime();
+            var t = FindType(runtime, type);
+            if (t == null) return 0;
+            foreach (var m in t.Methods)
+                if (m.Name == method && m.NativeCode != 0 && (sigContains == null || (m.Signature?.Contains(sigContains) ?? false)))
+                    return m.NativeCode;
+        }
+        catch { }
+        return 0;
+    }
+
     /// <summary>Resolve the live addresses of one or more static fields on a type, in a single snapshot.
     /// Static-field storage is allocated once for the process lifetime, so these addresses are stable
     /// (unlike JIT'd code) and can be written directly.</summary>

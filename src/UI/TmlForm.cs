@@ -59,6 +59,8 @@ public sealed class TmlForm : Form
     private readonly SpawnBoostPatcher _spawnBoost;
     // Force every natural spawn to a chosen rare mob — also targets the MP server.
     private readonly RareSpawnPatcher _rareSpawn;
+    // Multiply NPC loot stacks — targets the MP server (loot is server-authoritative).
+    private readonly DropMultPatcher _dropMult;
     // Auto-aim cursor weapons at the nearest enemy / boss (runs in the high-freq writer loop).
     private readonly AimbotPatcher _aimbot;
     // Block-reach extension by patching the per-frame reset in Player.ResetEffects (client-side).
@@ -105,6 +107,7 @@ public sealed class TmlForm : Form
         _scopedDrop = new ScopedDropPatcher(_engine, _target);
         _spawnBoost = new SpawnBoostPatcher(_target);
         _rareSpawn = new RareSpawnPatcher(_target);
+        _dropMult = new DropMultPatcher(_target);
         _aimbot = new AimbotPatcher(_engine);
         _tileReach = new TileReachPatcher(_engine);
         _maxMinions = new MaxMinionsPatcher(_engine);
@@ -140,12 +143,13 @@ public sealed class TmlForm : Form
             try { if (_scopedDrop.Enabled) _scopedDrop.Tick(); } catch { }
             try { if (_spawnBoost.Enabled) _spawnBoost.Tick(); } catch { }
             try { if (_rareSpawn.Enabled) _rareSpawn.Tick(); } catch { }
+            try { if (_dropMult.Enabled) _dropMult.Tick(); } catch { }
             try { if (_tileReach.Enabled) _tileReach.Tick(); } catch { }
             try { if (_maxMinions.Enabled) _maxMinions.Tick(); } catch { }
             // Tiered-JIT relocations only happen while a method warms up (first seconds of use), so we
             // only need the costly ClrMD snapshots frequently right after a toggle; once settled, back
             // off to cut steady-state snapshot churn (each one forks the target process).
-            bool active = _sticky.AnyActive || _scopedDrop.Enabled || _spawnBoost.Enabled || _rareSpawn.Enabled || _tileReach.Enabled || _maxMinions.Enabled;
+            bool active = _sticky.AnyActive || _scopedDrop.Enabled || _spawnBoost.Enabled || _rareSpawn.Enabled || _tileReach.Enabled || _maxMinions.Enabled || _dropMult.Enabled;
             bool fast = Environment.TickCount64 < _stickyFastUntilMs || (_rareSpawn.Enabled && !_rareSpawn.ScopeLocked);
             Thread.Sleep(!active ? 1000 : fast ? 2500 : 6000);
         }
@@ -441,6 +445,7 @@ public sealed class TmlForm : Form
             _scopedDrop.Clear();
             _spawnBoost.Clear();
             _rareSpawn.Clear();
+            _dropMult.Clear();
             _tileReach.Clear();
             _maxMinions.Clear();
             _travelShop.Clear();
@@ -730,14 +735,9 @@ public sealed class TmlForm : Form
                 else { _engine.Injector!.UnhookVanityAccessories(); AppendLog($"OFF: {r.Desc}"); }
                 break;
             case RowKind.DropMult:
-                if (r.Active)
-                {
-                    int f = int.TryParse(r.InjectValue, out var fv) ? fv : 5;
-                    _engine.RefreshMethodAddress("CommonCode.DropItem"); // follow tiered-JIT relocation
-                    if (_engine.Injector!.HookDropMultiplier(f)) AppendLog($"ON: {r.Desc} (loot stacks x{f})");
-                    else { r.Active = false; if (grow != null) grow.Cells["active"].Value = false; AppendLog($"Failed: {r.Desc}"); }
-                }
-                else { _engine.Injector!.UnhookDropMultiplier(); AppendLog($"OFF: {r.Desc}"); }
+                // Loot is server-authoritative — patch on the world process (auto-detects MP server).
+                if (r.Active) { int f = int.TryParse(r.InjectValue, out var fv) ? fv : 5; _dropMult.Enable(f); AppendLog($"ON: {r.Desc} (loot stacks x{f}; works on the MP host)"); }
+                else { _dropMult.Disable(); AppendLog($"OFF: {r.Desc}"); }
                 break;
             case RowKind.Crate:
                 if (r.Active)
@@ -904,7 +904,7 @@ public sealed class TmlForm : Form
         {
             if (!int.TryParse(text.Trim(), out var f) || f < 1) { f = 1; grow.Cells["value"].Value = "1"; }
             r.InjectValue = f.ToString();
-            if (r.Active) lock (_engine.Sync) { _engine.Injector!.HookDropMultiplier(f); AppendLog($"Drop multiplier set to x{f}"); }
+            if (r.Active) { _dropMult.SetFactor(f); AppendLog($"Drop multiplier set to x{f}"); }
             SaveConfig();
             return;
         }
@@ -975,7 +975,7 @@ public sealed class TmlForm : Form
             else if (r.Kind is RowKind.Patch or RowKind.PatchInt) { _sticky.Unregister(r.PatchMethod); }
             else if (r.Kind == RowKind.Vanity) { _engine.Injector?.UnhookVanityAccessories(); }
             else if (r.Kind == RowKind.PatchSet) { foreach (var spec in r.PatchMethod.Split(';', StringSplitOptions.RemoveEmptyEntries)) _sticky.Unregister(spec.Split(':')[0]); }
-            else if (r.Kind == RowKind.DropMult) { _engine.Injector?.UnhookDropMultiplier(); }
+            else if (r.Kind == RowKind.DropMult) { _dropMult.Disable(); }
             else if (r.Kind == RowKind.Crate) { _engine.Injector?.UnhookAlwaysCrate(); }
             else if (r.Kind == RowKind.ScopedDrop) { _scopedDrop.Disable(); }
             else if (r.Kind == RowKind.SpawnBoost) { _spawnBoost.Disable(); }
@@ -1207,6 +1207,7 @@ public sealed class TmlForm : Form
         try { _scopedDrop.Disable(); } catch { }
         try { _spawnBoost.Disable(); } catch { } // restore vanilla spawn defaults on the target
         try { _rareSpawn.Disable(); } catch { }  // remove the NewNPC cave on the target
+        try { _dropMult.Disable(); } catch { }   // remove the DropItem cave on the target
         try { _tileReach.Disable(); } catch { }  // restore the ResetEffects reach defaults
         try { _maxMinions.Disable(); } catch { } // restore the ResetEffects minion-cap default
         try { _travelShop.Clear(); } catch { }   // remove the re-roll call cave
