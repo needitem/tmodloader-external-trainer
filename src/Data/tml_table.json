@@ -1,7 +1,4 @@
 [
-  { "group": "❤️ Vitals", "desc": "Life — freeze for infinite HP", "field": "statLife", "kind": "value" },
-  { "group": "❤️ Vitals", "desc": "Mana — freeze (set high) for infinite mana", "field": "statMana", "kind": "value" },
-
   { "group": "👁️ Vision (code injection)", "desc": "Spelunker (highlight ores)", "field": "findTreasure", "kind": "inject" },
   { "group": "👁️ Vision (code injection)", "desc": "Night Vision", "field": "nightVision", "kind": "inject" },
   { "group": "👁️ Vision (code injection)", "desc": "Hunter (highlight enemies)", "field": "detectCreature", "kind": "inject" },
