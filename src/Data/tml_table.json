@@ -40,6 +40,7 @@
 
   { "group": "🧲 Quality of Life", "desc": "Item Pickup Range (px — edit the number; default grab ~50)", "kind": "patchint", "method": "Player.GetItemGrabRange", "value": "2000" },
   { "group": "🧲 Quality of Life", "desc": "Block Reach — place/mine/use distance in tiles (edit; vanilla 5)", "kind": "tilereach", "value": "25" },
+  { "group": "🧲 Quality of Life", "desc": "Max Minions — summon slot cap (edit; vanilla 1, your gear stacks on top)", "kind": "maxminions", "value": "10" },
 
   { "group": "🚫 No Debuffs (sickness / cooldown)", "desc": "No Potion Sickness (heal potions never on cooldown)", "kind": "patch", "method": "Player.ApplyPotionDelay", "value": "0" },
   { "group": "🚫 No Debuffs (sickness / cooldown)", "desc": "No Mana Sickness (full magic damage after mana potions)", "kind": "buffclear", "value": "94" },

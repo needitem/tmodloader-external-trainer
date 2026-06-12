@@ -63,6 +63,8 @@ public sealed class TmlForm : Form
     private readonly AimbotPatcher _aimbot;
     // Block-reach extension by patching the per-frame reset in Player.ResetEffects (client-side).
     private readonly TileReachPatcher _tileReach;
+    // Raises the summon-minion cap by patching the per-frame reset in Player.ResetEffects (client-side).
+    private readonly MaxMinionsPatcher _maxMinions;
     // Re-rolls the Traveling Merchant's stock on click via a game-thread call cave (client-side).
     private readonly TravelShopPatcher _travelShop;
     // Forces the Traveling Merchant to arrive (SpawnOnPlayer), run on the server process.
@@ -105,6 +107,7 @@ public sealed class TmlForm : Form
         _rareSpawn = new RareSpawnPatcher(_target);
         _aimbot = new AimbotPatcher(_engine);
         _tileReach = new TileReachPatcher(_engine);
+        _maxMinions = new MaxMinionsPatcher(_engine);
         _travelShop = new TravelShopPatcher(_engine);
         _merchantSpawn = new TravelMerchantSpawner(_engine, _target);
         _mapScanner = new WorldMapScanner(_engine, _target);
@@ -138,10 +141,11 @@ public sealed class TmlForm : Form
             try { if (_spawnBoost.Enabled) _spawnBoost.Tick(); } catch { }
             try { if (_rareSpawn.Enabled) _rareSpawn.Tick(); } catch { }
             try { if (_tileReach.Enabled) _tileReach.Tick(); } catch { }
+            try { if (_maxMinions.Enabled) _maxMinions.Tick(); } catch { }
             // Tiered-JIT relocations only happen while a method warms up (first seconds of use), so we
             // only need the costly ClrMD snapshots frequently right after a toggle; once settled, back
             // off to cut steady-state snapshot churn (each one forks the target process).
-            bool active = _sticky.AnyActive || _scopedDrop.Enabled || _spawnBoost.Enabled || _rareSpawn.Enabled || _tileReach.Enabled;
+            bool active = _sticky.AnyActive || _scopedDrop.Enabled || _spawnBoost.Enabled || _rareSpawn.Enabled || _tileReach.Enabled || _maxMinions.Enabled;
             bool fast = Environment.TickCount64 < _stickyFastUntilMs || (_rareSpawn.Enabled && !_rareSpawn.ScopeLocked);
             Thread.Sleep(!active ? 1000 : fast ? 2500 : 6000);
         }
@@ -439,6 +443,7 @@ public sealed class TmlForm : Form
             _spawnBoost.Clear();
             _rareSpawn.Clear();
             _tileReach.Clear();
+            _maxMinions.Clear();
             _travelShop.Clear();
             _merchantSpawn.Clear();
             _aimbot.Clear();
@@ -500,7 +505,7 @@ public sealed class TmlForm : Form
             foreach (var r in _rows)
             {
                 if (r.Kind is RowKind.GroupHeader or RowKind.Action) continue;
-                bool editable = r.Kind is RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost or RowKind.RareSpawn or RowKind.SprayRange or RowKind.TileReach;
+                bool editable = r.Kind is RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost or RowKind.RareSpawn or RowKind.SprayRange or RowKind.TileReach or RowKind.MaxMinions;
                 if (!r.Active && !editable) continue;          // inactive non-editable: nothing to remember
                 // Editable rows persist their value even when OFF (prefix "off:") so settings stick.
                 data[r.Desc] = editable ? (r.Active ? "" : "off:") + r.InjectValue
@@ -529,7 +534,7 @@ public sealed class TmlForm : Form
         {
             if (r.Kind is RowKind.GroupHeader or RowKind.Action) continue;
             if (!data.TryGetValue(r.Desc, out var saved)) continue;
-            bool editable = r.Kind is RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost or RowKind.RareSpawn or RowKind.SprayRange or RowKind.TileReach;
+            bool editable = r.Kind is RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost or RowKind.RareSpawn or RowKind.SprayRange or RowKind.TileReach or RowKind.MaxMinions;
             bool inactive = saved.StartsWith("off:", StringComparison.Ordinal);
             string val = inactive ? saved[4..] : saved;
 
@@ -626,9 +631,9 @@ public sealed class TmlForm : Form
                 row.Cells["type"].Value = TypeLabel(r);
                 row.Cells["value"].Value = r.Kind == RowKind.Action ? "▶ click On"
                     : r.Kind == RowKind.Value ? (r.FrozenText ?? "—")
-                    : r.Kind is RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost or RowKind.SprayRange or RowKind.TileReach ? r.InjectValue
+                    : r.Kind is RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost or RowKind.SprayRange or RowKind.TileReach or RowKind.MaxMinions ? r.InjectValue
                     : "—";
-                row.Cells["value"].ReadOnly = r.Kind is not (RowKind.Value or RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost or RowKind.SprayRange or RowKind.TileReach);
+                row.Cells["value"].ReadOnly = r.Kind is not (RowKind.Value or RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost or RowKind.SprayRange or RowKind.TileReach or RowKind.MaxMinions);
             }
         }
         grid.ResumeLayout();
@@ -652,6 +657,7 @@ public sealed class TmlForm : Form
         RowKind.SpawnBoost => "spawn",
         RowKind.SprayRange => "spray",
         RowKind.TileReach => "reach",
+        RowKind.MaxMinions => "minions",
         RowKind.AnglerQuest => "angler",
         RowKind.RareSpawn => "rare▾",
         RowKind.Aimbot => "aim",
@@ -793,6 +799,11 @@ public sealed class TmlForm : Form
                 if (r.Active) { int v = int.TryParse(r.InjectValue, out var tv) ? tv : 25; _tileReach.Enable(v); AppendLog($"ON: {r.Desc} → {v} tiles"); }
                 else { _tileReach.Disable(); AppendLog($"OFF: {r.Desc} (restored 5/4)"); }
                 break;
+            case RowKind.MaxMinions:
+                // Clean patch of the per-frame reset in ResetEffects (no write-race flicker).
+                if (r.Active) { int v = int.TryParse(r.InjectValue, out var mv) ? mv : 10; _maxMinions.Enable(v); AppendLog($"ON: {r.Desc} → {v} slots"); }
+                else { _maxMinions.Disable(); AppendLog($"OFF: {r.Desc} (restored 1)"); }
+                break;
             case RowKind.AnglerQuest:
                 // the high-frequency writer keeps the daily-done flag/list clear while active.
                 if (r.Active) _engine.SetAnglerUnlimited();
@@ -895,7 +906,7 @@ public sealed class TmlForm : Form
     {
         if (e.RowIndex < 0) return;
         var grow = _grid.Rows[e.RowIndex];
-        if (grow.Tag is not CheatRow r || r.Kind is not (RowKind.Value or RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost or RowKind.SprayRange or RowKind.TileReach)) return;
+        if (grow.Tag is not CheatRow r || r.Kind is not (RowKind.Value or RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost or RowKind.SprayRange or RowKind.TileReach or RowKind.MaxMinions)) return;
         if (_grid.Columns[e.ColumnIndex].Name == "value")
         {
             _grid.BeginEdit(true);
@@ -964,6 +975,14 @@ public sealed class TmlForm : Form
             SaveConfig();
             return;
         }
+        if (r.Kind == RowKind.MaxMinions)
+        {
+            if (!int.TryParse(text.Trim(), out var sv) || sv < 1) { sv = 10; grow.Cells["value"].Value = "10"; }
+            r.InjectValue = sv.ToString();
+            if (r.Active) { _maxMinions.SetValue(sv); AppendLog($"Max minions set to {sv} slots"); }
+            SaveConfig();
+            return;
+        }
 
         if (r.Kind != RowKind.Value) return;
         lock (_engine.Sync)
@@ -997,6 +1016,7 @@ public sealed class TmlForm : Form
             else if (r.Kind == RowKind.RareSpawn) { _rareSpawn.Disable(); }
             else if (r.Kind == RowKind.Aimbot) { _aimbot.Disable(); }
             else if (r.Kind == RowKind.TileReach) { _tileReach.Disable(); }
+            else if (r.Kind == RowKind.MaxMinions) { _maxMinions.Disable(); }
         }
         foreach (var g in new[] { _grid, _buffGrid })
             foreach (DataGridViewRow gr in g.Rows)
@@ -1212,6 +1232,7 @@ public sealed class TmlForm : Form
         try { _spawnBoost.Disable(); } catch { } // restore vanilla spawn defaults on the target
         try { _rareSpawn.Disable(); } catch { }  // remove the NewNPC cave on the target
         try { _tileReach.Disable(); } catch { }  // restore the ResetEffects reach defaults
+        try { _maxMinions.Disable(); } catch { } // restore the ResetEffects minion-cap default
         try { _travelShop.Clear(); } catch { }   // remove the re-roll call cave
         try { _merchantSpawn.Clear(); } catch { } // remove the server-side summon cave
         try { _aimbot.Disable(); } catch { }     // stop overriding the cursor
