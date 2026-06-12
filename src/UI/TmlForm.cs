@@ -334,7 +334,6 @@ public sealed class TmlForm : Form
 
         g.Columns.Add(new DataGridViewCheckBoxColumn { HeaderText = "On", Name = "active", Width = 42 });
         g.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Description", Name = "desc", ReadOnly = true, Width = 380, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill });
-        g.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Type", Name = "type", ReadOnly = true, Width = 60 });
         g.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Value", Name = "value", Width = 150 });
 
         // Clicking a header must NOT sort — it scrambles the grouped rows and breaks toggling.
@@ -617,7 +616,6 @@ public sealed class TmlForm : Form
             {
                 row.Cells["active"].Value = r.Active;
                 row.Cells["desc"].Value = r.Desc;
-                row.Cells["type"].Value = TypeLabel(r);
                 int sel = int.TryParse(r.InjectValue, out var t) ? t : 0;
                 if (sel <= 0 && _rareSelType > 0) { sel = _rareSelType; r.InjectValue = sel.ToString(); } // survive re-attach
                 row.Cells["value"].Value = sel > 0 ? RareName(sel) : "▾ click to pick";
@@ -628,7 +626,6 @@ public sealed class TmlForm : Form
             {
                 row.Cells["active"].Value = r.Active;
                 row.Cells["desc"].Value = r.Desc;
-                row.Cells["type"].Value = TypeLabel(r);
                 row.Cells["value"].Value = r.Kind == RowKind.Action ? "▶ click On"
                     : r.Kind == RowKind.Value ? (r.FrozenText ?? "—")
                     : r.Kind is RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost or RowKind.SprayRange or RowKind.TileReach or RowKind.MaxMinions ? r.InjectValue
@@ -639,40 +636,9 @@ public sealed class TmlForm : Form
         grid.ResumeLayout();
     }
 
-    private static string TypeLabel(CheatRow r) => r.Kind switch
-    {
-        RowKind.Buff => "buff",
-        RowKind.Toggle => "bool",
-        RowKind.Inject => "inject",
-        RowKind.Fast => "fast",
-        RowKind.UseHook => "hook",
-        RowKind.Tools => "tools",
-        RowKind.Craft => "craft",
-        RowKind.Patch => "patch",
-        RowKind.PatchSet => "patch*",
-        RowKind.DropMult => "drop×",
-        RowKind.PatchInt => "value",
-        RowKind.Crate => "fishing",
-        RowKind.ScopedDrop => "drop(me)",
-        RowKind.SpawnBoost => "spawn",
-        RowKind.SprayRange => "spray",
-        RowKind.TileReach => "reach",
-        RowKind.MaxMinions => "minions",
-        RowKind.AnglerQuest => "angler",
-        RowKind.RareSpawn => "rare▾",
-        RowKind.Aimbot => "aim",
-        RowKind.BuffClear => "no-debuff",
-        RowKind.InfAmmo => "ammo",
-        RowKind.Vanity => "vanity",
-        RowKind.Action => "",
-        RowKind.Value => r.Field!.Kind switch
-        {
-            FieldKind.Single or FieldKind.Double => "float",
-            FieldKind.Boolean => "bool",
-            _ => "int",
-        },
-        _ => "",
-    };
+    // Rows whose state IS a number the user sets (shown as that value, not an on/off indicator).
+    private static bool IsValueKind(RowKind k) => k is RowKind.DropMult or RowKind.PatchInt
+        or RowKind.SpawnBoost or RowKind.SprayRange or RowKind.TileReach or RowKind.MaxMinions;
 
     // ---- interaction ----
 
@@ -1120,6 +1086,16 @@ public sealed class TmlForm : Form
                         if (!ReferenceEquals(cell, editing)) cell.Value = r.FrozenText;
                     }
                     else if (!ReferenceEquals(cell, editing)) cell.Value = _engine.ReadField(r.Field!);
+                }
+                else if (IsValueKind(r.Kind))
+                {
+                    // value-setting features show the configured number as their state, not on/off
+                    if (!ReferenceEquals(cell, editing)) cell.Value = r.InjectValue;
+                }
+                else if (r.Kind == RowKind.RareSpawn)
+                {
+                    int rt = int.TryParse(r.InjectValue, out var t) ? t : 0;
+                    if (!ReferenceEquals(cell, editing)) cell.Value = rt > 0 ? RareName(rt) : "▾ click to pick";
                 }
                 else // Toggle / Inject / Fast / Buff
                 {
