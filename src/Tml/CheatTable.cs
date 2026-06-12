@@ -204,6 +204,21 @@ public static class CheatTable
         rows.Add(new CheatRow { Kind = RowKind.Action, Group = "🛒 Traveling Merchant", Desc = "Summon Traveling Merchant — make him arrive (click)" });
         rows.Add(new CheatRow { Kind = RowKind.Action, Group = "🛒 Traveling Merchant", Desc = "Re-roll Traveling Merchant stock (click)" });
 
+        // ---- on-demand world events (server-authoritative) ----
+        EmitGroup(rows, ref lastGroup, "🌩️ Events (on-demand)");
+        foreach (var ev in new[]
+        {
+            "Rain (click)",
+            "Blizzard — rain; shows as a blizzard in the snow biome (click)",
+            "Sandstorm (click)",
+            "Slime Rain (click)",
+            "Blood Moon — set at NIGHT (click)",
+            "Goblin Army invasion (click)",
+            "Solar Eclipse — set during the DAY (click)",
+            "Pirate Invasion (click)",
+        })
+            rows.Add(new CheatRow { Kind = RowKind.Action, Group = "🌩️ Events (on-demand)", Desc = ev });
+
         // ---- buff toggles, grouped by function (mirrors CT's potion categories) ----
         // Effects like speed/defense/vision/mining are delivered as buffs because the
         // game recomputes the raw Player fields every frame (external freezes can't hold

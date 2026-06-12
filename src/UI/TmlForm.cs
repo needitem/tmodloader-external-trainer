@@ -69,8 +69,12 @@ public sealed class TmlForm : Form
     private readonly MaxMinionsPatcher _maxMinions;
     // Re-rolls the Traveling Merchant's stock on click via a game-thread call cave (client-side).
     private readonly TravelShopPatcher _travelShop;
+    // Shared "run a managed static on the world process's game thread" channel (merchant + events).
+    private readonly ServerCaller _serverCaller;
     // Forces the Traveling Merchant to arrive (SpawnOnPlayer), run on the server process.
     private readonly TravelMerchantSpawner _merchantSpawn;
+    // Triggers weather/invasion/blood-moon/eclipse events on the world process.
+    private readonly EventTrigger _eventTrigger;
     // Renders a world overview highlighting Corruption / Crimson / Hallow (on-demand snapshot).
     private readonly WorldMapScanner _mapScanner;
     private List<(int type, int stars, string name)> _rareNpcs = new();
@@ -112,7 +116,9 @@ public sealed class TmlForm : Form
         _tileReach = new TileReachPatcher(_engine);
         _maxMinions = new MaxMinionsPatcher(_engine);
         _travelShop = new TravelShopPatcher(_engine);
-        _merchantSpawn = new TravelMerchantSpawner(_engine, _target);
+        _serverCaller = new ServerCaller(_target);
+        _merchantSpawn = new TravelMerchantSpawner(_engine, _serverCaller);
+        _eventTrigger = new EventTrigger(_target, _serverCaller);
         _mapScanner = new WorldMapScanner(_engine, _target);
         _engine.Log += AppendLog;
         _btnAttach.Click += (_, _) => DoAttach();
@@ -449,7 +455,7 @@ public sealed class TmlForm : Form
             _tileReach.Clear();
             _maxMinions.Clear();
             _travelShop.Clear();
-            _merchantSpawn.Clear();
+            _serverCaller.Clear();
             _aimbot.Clear();
             try { _rareNpcs = TmlDiscovery.EnumerateRareNpcs(_engine.Proc!.Id, 2); AppendLog($"Loaded {_rareNpcs.Count} rare mobs for the spawn picker."); } catch { _rareNpcs = new(); }
             CacheVitalFields();
@@ -866,6 +872,27 @@ public sealed class TmlForm : Form
             lock (_engine.Sync) AppendLog(_travelShop.Reroll()
                 ? "Traveling Merchant stock re-rolled — re-open the shop to see new items."
                 : $"Re-roll failed: {_travelShop.Status}");
+        else
+            TriggerEvent(r.Desc);
+    }
+
+    // On-demand world events — run on the world-authoritative process (auto-detects the MP server).
+    private void TriggerEvent(string desc)
+    {
+        const string M = "Terraria.Main";
+        (bool ok, string what) = desc switch
+        {
+            _ when desc.StartsWith("Rain")            => (_eventTrigger.CallStatic(M, "StartRain"), "Rain"),
+            _ when desc.StartsWith("Blizzard")        => (_eventTrigger.CallStatic(M, "StartRain"), "Blizzard (rain)"),
+            _ when desc.StartsWith("Sandstorm")       => (_eventTrigger.CallStatic("Terraria.GameContent.Events.Sandstorm", "StartSandstorm"), "Sandstorm"),
+            _ when desc.StartsWith("Slime Rain")      => (_eventTrigger.CallStatic(M, "StartSlimeRain", 1), "Slime Rain"),
+            _ when desc.StartsWith("Blood Moon")      => (_eventTrigger.SetFlag("bloodMoon"), "Blood Moon"),
+            _ when desc.StartsWith("Goblin Army")     => (_eventTrigger.CallStatic(M, "StartInvasion", 1), "Goblin Army"),
+            _ when desc.StartsWith("Solar Eclipse")   => (_eventTrigger.SetFlag("eclipse"), "Solar Eclipse"),
+            _ when desc.StartsWith("Pirate Invasion") => (_eventTrigger.CallStatic(M, "StartInvasion", 3), "Pirate Invasion"),
+            _ => (false, desc),
+        };
+        AppendLog(ok ? $"Triggered: {what} (on the world server)" : $"{what} failed: {_eventTrigger.Status}");
     }
 
     private void Grid_CellDoubleClick(object? sender, DataGridViewCellEventArgs e)
@@ -1211,7 +1238,7 @@ public sealed class TmlForm : Form
         try { _tileReach.Disable(); } catch { }  // restore the ResetEffects reach defaults
         try { _maxMinions.Disable(); } catch { } // restore the ResetEffects minion-cap default
         try { _travelShop.Clear(); } catch { }   // remove the re-roll call cave
-        try { _merchantSpawn.Clear(); } catch { } // remove the server-side summon cave
+        try { _serverCaller.Clear(); } catch { } // remove the shared server game-thread cave
         try { _aimbot.Disable(); } catch { }     // stop overriding the cursor
         _headerFont?.Dispose();
         try { _target.Reset(); } catch { }       // close the shared server handle
