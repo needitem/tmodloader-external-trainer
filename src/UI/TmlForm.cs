@@ -156,10 +156,11 @@ public sealed class TmlForm : Form
             try { if (_dropMult.Enabled) _dropMult.Tick(); } catch { }
             try { if (_tileReach.Enabled) _tileReach.Tick(); } catch { }
             try { if (_maxMinions.Enabled) _maxMinions.Tick(); } catch { }
+            try { if (_abyssVision.Enabled) _abyssVision.Tick(); } catch { }
             // Tiered-JIT relocations only happen while a method warms up (first seconds of use), so we
             // only need the costly ClrMD snapshots frequently right after a toggle; once settled, back
             // off to cut steady-state snapshot churn (each one forks the target process).
-            bool active = _sticky.AnyActive || _scopedDrop.Enabled || _spawnBoost.Enabled || _rareSpawn.Enabled || _tileReach.Enabled || _maxMinions.Enabled || _dropMult.Enabled;
+            bool active = _sticky.AnyActive || _scopedDrop.Enabled || _spawnBoost.Enabled || _rareSpawn.Enabled || _tileReach.Enabled || _maxMinions.Enabled || _dropMult.Enabled || _abyssVision.Enabled;
             bool fast = Environment.TickCount64 < _stickyFastUntilMs || (_rareSpawn.Enabled && !_rareSpawn.ScopeLocked);
             Thread.Sleep(!active ? 1000 : fast ? 2500 : 6000);
         }
@@ -187,13 +188,13 @@ public sealed class TmlForm : Form
         {
             while (_writerRun)
             {
-                bool active = _engine.Attached && (HasActiveWrites() || _aimbot.Enabled || _abyssVision.Enabled);
+                bool active = _engine.Attached && (HasActiveWrites() || _aimbot.Enabled);
                 if (active && !hiRes) { timeBeginPeriod(1); hiRes = true; }
                 else if (!active && hiRes) { timeEndPeriod(1); hiRes = false; }
 
                 if (active)
                 {
-                    try { lock (_engine.Sync) { AssertActiveWrites(); _aimbot.Tick(); _abyssVision.Tick(); } }
+                    try { lock (_engine.Sync) { AssertActiveWrites(); _aimbot.Tick(); } }
                     catch { /* transient (process gone, list swap) */ }
                 }
                 Thread.Sleep(active ? 5 : 33);
@@ -1366,6 +1367,7 @@ public sealed class TmlForm : Form
         try { _dropMult.Disable(); } catch { }   // remove the DropItem cave on the target
         try { _tileReach.Disable(); } catch { }  // restore the ResetEffects reach defaults
         try { _maxMinions.Disable(); } catch { } // restore the ResetEffects minion-cap default
+        try { _abyssVision.Disable(); } catch { } // restore Calamity's darkness load
         try { _travelShop.Clear(); } catch { }   // remove the re-roll call cave
         try { _serverCaller.Clear(); } catch { } // remove the shared server game-thread cave
         try { _aimbot.Disable(); } catch { }     // stop overriding the cursor

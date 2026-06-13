@@ -419,6 +419,47 @@ internal static class ClrDiscovery
         Console.WriteLine(sb.ToString());
     }
 
+    /// <summary>Scan method bodies (in modules whose name contains modSub) for a movss load/store whose
+    /// disp32 equals <paramref name="offset"/> — i.e. code that reads/writes a specific instance field.
+    /// Used to find the method that computes a CalamityPlayer field (e.g. darknessIntensity @0x370).</summary>
+    public static void FindFieldAccess(int pid, int offset, string modSub)
+    {
+        using var dt = DataTarget.CreateSnapshotAndAttach(pid);
+        using var runtime = dt.ClrVersions.First().CreateRuntime();
+        var disp = BitConverter.GetBytes(offset);
+        int hits = 0;
+        foreach (var mod in runtime.EnumerateModules())
+        {
+            if (mod.Name == null || !mod.Name.Contains(modSub, StringComparison.OrdinalIgnoreCase)) continue;
+            foreach (var (mt, _) in mod.EnumerateTypeDefToMethodTableMap())
+            {
+                ClrType? t; try { t = runtime.GetTypeByMethodTable(mt); } catch { continue; }
+                if (t?.Name == null) continue;
+                foreach (var m in t.Methods)
+                {
+                    if (m.NativeCode == 0) continue;
+                    int size = 0; try { size = (int)m.HotColdInfo.HotSize; } catch { }
+                    if (size <= 0 || size > 0x6000) continue;
+                    byte[] code = new byte[size];
+                    try { dt.DataReader.Read(m.NativeCode, code); } catch { continue; }
+                    for (int i = 0; i + 9 <= size; i++)
+                    {
+                        int op, modrmPos;
+                        if (code[i] == 0xF3 && code[i + 1] == 0x0F && (code[i + 2] == 0x10 || code[i + 2] == 0x11)) { op = code[i + 2]; modrmPos = i + 3; } // legacy movss
+                        else if (code[i] == 0xC5 && code[i + 1] == 0xFA && (code[i + 2] == 0x10 || code[i + 2] == 0x11)) { op = code[i + 2]; modrmPos = i + 3; } // VEX2 vmovss
+                        else continue;
+                        byte modrm = code[modrmPos]; if ((modrm & 0xC0) != 0x80) continue; // need [reg+disp32]
+                        int d = modrmPos + 1 + ((modrm & 7) == 4 ? 1 : 0); // skip SIB if present
+                        if (d + 4 > size) continue;
+                        if (code[d] == disp[0] && code[d + 1] == disp[1] && code[d + 2] == disp[2] && code[d + 3] == disp[3])
+                        { Console.WriteLine($"  {(op == 0x11 ? "WRITE" : "read ")} {t.Name}.{m.Name} @0x{m.NativeCode:X} (+0x{i:X})"); hits++; }
+                    }
+                }
+            }
+        }
+        Console.WriteLine($"total: {hits}");
+    }
+
     /// <summary>Scan EVERY type in every module for a method whose name contains <paramref name="methodName"/>.</summary>
     public static void FindMethodEverywhere(int pid, string methodName)
     {

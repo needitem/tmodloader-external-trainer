@@ -1626,6 +1626,13 @@ if (mode == "contentid") // contentid <typeNameSubstr> — ModBuff/ModItem singl
     return 0;
 }
 
+if (mode == "fieldaccess") // fieldaccess <offsetHex> [modSub] — find methods reading/writing [reg+offset]
+{
+    int off = Convert.ToInt32(args.Length > 1 ? args[1] : "370", 16);
+    ClrDiscovery.FindFieldAccess(proc.Id, off, args.Length > 2 ? args[2] : "Calamity");
+    return 0;
+}
+
 if (mode == "scanfields") // scanfields <substr> — every type's fields matching substr
 {
     ClrDiscovery.FindFieldEverywhere(proc.Id, args.Length > 1 ? args[1] : "homing");
