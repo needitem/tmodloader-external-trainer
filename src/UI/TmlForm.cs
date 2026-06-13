@@ -32,6 +32,7 @@ public sealed class TmlForm : Form
     private string _lastSpawnStatus = "";
     private string _lastRareStatus = "";
     private string _lastAimStatus = "";
+    private string _lastAbyssStatus = "";
     private int _rareLogTick;
     private int _sprayTick;
     private int _anglerTick;
@@ -1218,6 +1219,9 @@ public sealed class TmlForm : Form
 
             if (_aimbot.Enabled && _aimbot.Status != _lastAimStatus)
             { _lastAimStatus = _aimbot.Status; AppendLog($"[aimbot] {_lastAimStatus}"); }
+
+            if (_abyssVision.Enabled && _abyssVision.Status != _lastAbyssStatus)
+            { _lastAbyssStatus = _abyssVision.Status; AppendLog($"[abyss vision] {_lastAbyssStatus}"); }
 
             // Fast-tools is asserted by the high-frequency writer (the held item is recomputed
             // every frame by Calamity, so a slow write loses). The slow tick re-snapshots
