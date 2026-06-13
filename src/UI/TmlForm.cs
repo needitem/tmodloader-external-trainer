@@ -890,24 +890,37 @@ public sealed class TmlForm : Form
         HashSet<int> present;
         lock (_engine.Sync) present = _engine.ActiveTownNpcTypes();
         var absent = _townNpcs.Where(x => !present.Contains(x.type)).ToList();
-        var here = _townNpcs.Where(x => present.Contains(x.type)).ToList();
-        AppendLog($"Town NPCs: {here.Count} present, {absent.Count} not yet arrived.");
+        int hereCount = _townNpcs.Count - absent.Count;
+        AppendLog($"Town NPCs: {hereCount} present, {absent.Count} not yet arrived.");
 
         using var dlg = new Form
         {
-            Text = $"Town NPCs — {absent.Count} not yet arrived", Width = 420, Height = 540,
+            Text = $"Town NPCs — {absent.Count} not yet arrived", Width = 430, Height = 560,
             StartPosition = FormStartPosition.CenterParent, FormBorderStyle = FormBorderStyle.FixedDialog,
             MaximizeBox = false, MinimizeBox = false, Font = Font,
         };
+        var top = new Label { Dock = DockStyle.Top, Height = 38, Padding = new Padding(8, 8, 8, 0),
+            Text = $"✓ {hereCount} already in town. Select a missing one below and Summon (force-arrives next to you)." };
         var list = new ListBox { Dock = DockStyle.Fill, IntegralHeight = false };
-        var close = new Button { Text = "Close", Dock = DockStyle.Bottom, Height = 34 };
-        list.Items.Add($"— NOT YET ARRIVED ({absent.Count}) —");
-        foreach (var x in absent) list.Items.Add($"   {x.name}  (#{x.type})");
-        list.Items.Add("");
-        list.Items.Add($"— ALREADY IN TOWN ({here.Count}) —");
-        foreach (var x in here) list.Items.Add($"   ✓ {x.name}  (#{x.type})");
+        foreach (var x in absent) list.Items.Add($"{x.name}  (#{x.type})");
+        var bar = new Panel { Dock = DockStyle.Bottom, Height = 40 };
+        var summon = new Button { Text = "Summon selected", Dock = DockStyle.Left, Width = 200, Height = 36 };
+        var close = new Button { Text = "Close", Dock = DockStyle.Right, Width = 120, Height = 36 };
+        void DoSummon()
+        {
+            int idx = list.SelectedIndex;
+            if (idx < 0 || idx >= absent.Count) return;
+            var (type, name) = absent[idx];
+            bool ok; lock (_engine.Sync) ok = _merchantSpawn.SummonType(type);
+            AppendLog(ok ? $"Summoning {name} (#{type}) — arrives at the next world spawn tick."
+                         : $"Summon failed: {_merchantSpawn.Status}");
+            if (ok) list.Items[idx] = $"⏳ {name}  (#{type})";
+        }
+        summon.Click += (_, _) => DoSummon();
+        list.DoubleClick += (_, _) => DoSummon();
         close.Click += (_, _) => dlg.Close();
-        dlg.Controls.Add(list); dlg.Controls.Add(close);
+        bar.Controls.Add(summon); bar.Controls.Add(close);
+        dlg.Controls.Add(list); dlg.Controls.Add(bar); dlg.Controls.Add(top);
         dlg.CancelButton = close;
         dlg.ShowDialog(this);
     }

@@ -30,8 +30,12 @@ public sealed class TravelMerchantSpawner
     public TravelMerchantSpawner(TmlEngine client, ServerCaller caller) { _client = client; _caller = caller; }
     public string Status { get { lock (_lock) return _status; } }
 
-    /// <summary>Arm + fire one summon on the world process. Returns false (with a status) on failure.</summary>
-    public bool Summon()
+    /// <summary>Force the Traveling Merchant to arrive.</summary>
+    public bool Summon() => SummonType(TravelingMerchant);
+
+    /// <summary>Arm + fire one NPC spawn (any type) on the world process — SpawnOnPlayer drops it next to the
+    /// host. Used for the merchant and for force-arriving any town NPC. False (with a status) on failure.</summary>
+    public bool SummonType(int type)
     {
         lock (_lock)
         {
@@ -53,7 +57,7 @@ public sealed class TravelMerchantSpawner
             ulong sp = TmlDiscovery.ResolveMethodAddr(pid, "Terraria.NPC", "SpawnOnPlayer");
             if (sp == 0) { _status = "SpawnOnPlayer not warmed up — summon any boss once, then retry"; return false; }
 
-            if (!_caller.Call(sp, plr, TravelingMerchant)) { _status = _caller.Status; return false; }
+            if (!_caller.Call(sp, plr, type)) { _status = _caller.Status; return false; }
             _status = $"summon queued ({(isServer ? "server" : "single-player")}, player {plr})";
             return true;
         }
