@@ -63,6 +63,8 @@ public sealed class TmlForm : Form
     private readonly DropMultPatcher _dropMult;
     // Auto-aim cursor weapons at the nearest enemy / boss (runs in the high-freq writer loop).
     private readonly AimbotPatcher _aimbot;
+    // Cancel Calamity's Abyss/cave screen darkness (runs in the high-freq writer loop).
+    private readonly CalamityVisionPatcher _abyssVision;
     // Block-reach extension by patching the per-frame reset in Player.ResetEffects (client-side).
     private readonly TileReachPatcher _tileReach;
     // Raises the summon-minion cap by patching the per-frame reset in Player.ResetEffects (client-side).
@@ -114,6 +116,7 @@ public sealed class TmlForm : Form
         _rareSpawn = new RareSpawnPatcher(_target);
         _dropMult = new DropMultPatcher(_target);
         _aimbot = new AimbotPatcher(_engine);
+        _abyssVision = new CalamityVisionPatcher(_engine);
         _tileReach = new TileReachPatcher(_engine);
         _maxMinions = new MaxMinionsPatcher(_engine);
         _travelShop = new TravelShopPatcher(_engine);
@@ -184,13 +187,13 @@ public sealed class TmlForm : Form
         {
             while (_writerRun)
             {
-                bool active = _engine.Attached && (HasActiveWrites() || _aimbot.Enabled);
+                bool active = _engine.Attached && (HasActiveWrites() || _aimbot.Enabled || _abyssVision.Enabled);
                 if (active && !hiRes) { timeBeginPeriod(1); hiRes = true; }
                 else if (!active && hiRes) { timeEndPeriod(1); hiRes = false; }
 
                 if (active)
                 {
-                    try { lock (_engine.Sync) { AssertActiveWrites(); _aimbot.Tick(); } }
+                    try { lock (_engine.Sync) { AssertActiveWrites(); _aimbot.Tick(); _abyssVision.Tick(); } }
                     catch { /* transient (process gone, list swap) */ }
                 }
                 Thread.Sleep(active ? 5 : 33);
@@ -458,6 +461,7 @@ public sealed class TmlForm : Form
             _travelShop.Clear();
             _serverCaller.Clear();
             _aimbot.Clear();
+            _abyssVision.Clear();
             try { _rareNpcs = TmlDiscovery.EnumerateRareNpcs(_engine.Proc!.Id, 2); AppendLog($"Loaded {_rareNpcs.Count} rare mobs for the spawn picker."); } catch { _rareNpcs = new(); }
             CacheVitalFields();
             lock (_engine.Sync) LoadAndApplyConfig(); // restore previously-enabled cheats
@@ -800,6 +804,10 @@ public sealed class TmlForm : Form
                 ApplyAimbot();
                 AppendLog($"{(r.Active ? "ON" : "OFF")}: {r.Desc}" + (r.Active ? " (hold attack to auto-aim)" : ""));
                 break;
+            case RowKind.AbyssVision:
+                if (r.Active) _abyssVision.Enable(); else _abyssVision.Disable();
+                AppendLog($"{(r.Active ? "ON" : "OFF")}: {r.Desc}");
+                break;
             case RowKind.BuffClear:
                 // the high-frequency writer removes the buff each tick while active.
                 AppendLog($"{(r.Active ? "Enabled" : "Disabled")} {r.Desc}");
@@ -873,7 +881,7 @@ public sealed class TmlForm : Form
             lock (_engine.Sync) AppendLog(_travelShop.Reroll()
                 ? "Traveling Merchant stock re-rolled — re-open the shop to see new items."
                 : $"Re-roll failed: {_travelShop.Status}");
-        else if (r.Desc.StartsWith("Show town NPCs"))
+        else if (r.Desc.StartsWith("Town NPCs"))
             ShowMissingTownNpcs();
         else
             TriggerEvent(r.Desc);
@@ -887,42 +895,113 @@ public sealed class TmlForm : Form
             try { _townNpcs = TmlDiscovery.EnumerateTownNpcs(_engine.Proc.Id); } catch { _townNpcs = new(); }
             if (_townNpcs.Count == 0) { AppendLog("Couldn't load the town-NPC roster."); return; }
         }
-        HashSet<int> present;
+        var present = new HashSet<int>();
         lock (_engine.Sync) present = _engine.ActiveTownNpcTypes();
-        var absent = _townNpcs.Where(x => !present.Contains(x.type)).ToList();
-        int hereCount = _townNpcs.Count - absent.Count;
-        AppendLog($"Town NPCs: {hereCount} present, {absent.Count} not yet arrived.");
+        int hereCount = _townNpcs.Count(x => present.Contains(x.type));
+        AppendLog($"Town NPCs: {hereCount} present, {_townNpcs.Count - hereCount} not yet arrived.");
 
         using var dlg = new Form
         {
-            Text = $"Town NPCs — {absent.Count} not yet arrived", Width = 430, Height = 560,
+            Text = "Town NPCs", Width = 440, Height = 580,
             StartPosition = FormStartPosition.CenterParent, FormBorderStyle = FormBorderStyle.FixedDialog,
             MaximizeBox = false, MinimizeBox = false, Font = Font,
         };
-        var top = new Label { Dock = DockStyle.Top, Height = 38, Padding = new Padding(8, 8, 8, 0),
-            Text = $"✓ {hereCount} already in town. Select a missing one below and Summon (force-arrives next to you)." };
+        var top = new Label { Dock = DockStyle.Top, Height = 40, Padding = new Padding(8, 8, 8, 0),
+            Text = "✓ = in town. Select one, then Summon (force-arrive) or Remove (despawn)." };
         var list = new ListBox { Dock = DockStyle.Fill, IntegralHeight = false };
-        foreach (var x in absent) list.Items.Add($"{x.name}  (#{x.type})");
+        void Render() { list.BeginUpdate(); list.Items.Clear();
+            foreach (var x in _townNpcs) list.Items.Add($"{(present.Contains(x.type) ? "✓" : "  ")} {x.name}  (#{x.type})");
+            list.EndUpdate(); }
+        Render();
         var bar = new Panel { Dock = DockStyle.Bottom, Height = 40 };
-        var summon = new Button { Text = "Summon selected", Dock = DockStyle.Left, Width = 200, Height = 36 };
-        var close = new Button { Text = "Close", Dock = DockStyle.Right, Width = 120, Height = 36 };
+        var summon = new Button { Text = "Summon", Dock = DockStyle.Left, Width = 130, Height = 36 };
+        var remove = new Button { Text = "Remove", Dock = DockStyle.Left, Width = 130, Height = 36 };
+        var close = new Button { Text = "Close", Dock = DockStyle.Right, Width = 110, Height = 36 };
         void DoSummon()
         {
-            int idx = list.SelectedIndex;
-            if (idx < 0 || idx >= absent.Count) return;
-            var (type, name) = absent[idx];
+            int idx = list.SelectedIndex; if (idx < 0 || idx >= _townNpcs.Count) return;
+            var (type, name) = _townNpcs[idx];
+            if (present.Contains(type)) { AppendLog($"{name} is already in town."); return; }
             bool ok; lock (_engine.Sync) ok = _merchantSpawn.SummonType(type);
             AppendLog(ok ? $"Summoning {name} (#{type}) — arrives at the next world spawn tick."
                          : $"Summon failed: {_merchantSpawn.Status}");
-            if (ok) list.Items[idx] = $"⏳ {name}  (#{type})";
+            if (ok) { present.Add(type); Render(); list.SelectedIndex = idx; }
+        }
+        void DoRemove()
+        {
+            int idx = list.SelectedIndex; if (idx < 0 || idx >= _townNpcs.Count) return;
+            var (type, name) = _townNpcs[idx];
+            if (!present.Contains(type)) { AppendLog($"{name} isn't in town."); return; }
+            RemoveTownNpc(type, name);
+            present.Remove(type); Render(); list.SelectedIndex = idx;
         }
         summon.Click += (_, _) => DoSummon();
-        list.DoubleClick += (_, _) => DoSummon();
+        remove.Click += (_, _) => DoRemove();
         close.Click += (_, _) => dlg.Close();
-        bar.Controls.Add(summon); bar.Controls.Add(close);
+        bar.Controls.Add(remove); bar.Controls.Add(summon); bar.Controls.Add(close);
         dlg.Controls.Add(list); dlg.Controls.Add(bar); dlg.Controls.Add(top);
         dlg.CancelButton = close;
         dlg.ShowDialog(this);
+    }
+
+    private ulong _srvNpcArr; private int _srvNpcArrPid = -1;
+    private ulong ServerNpcArray(int pid)
+    {
+        if (pid < 0) return 0;
+        if (_srvNpcArrPid == pid && _srvNpcArr != 0) return _srvNpcArr;
+        try { var s = TmlDiscovery.ResolveStaticFields(pid, "Terraria.Main", "npc"); s.TryGetValue("npc", out _srvNpcArr); _srvNpcArrPid = pid; }
+        catch { _srvNpcArr = 0; }
+        return _srvNpcArr;
+    }
+
+    /// <summary>Despawn a town NPC by setting active=false on the world-authoritative process (and the host's
+    /// client for an immediate visual). Persists on world reload. Other MP clients may keep a ghost until
+    /// they reload — acceptable for the host.</summary>
+    private void RemoveTownNpc(int type, string name)
+    {
+        var model = _engine.Model;
+        if (model == null) { AppendLog("Attach first."); return; }
+        if (!model.NpcFields.TryGetValue("active", out var aOff) ||
+            !model.NpcFields.TryGetValue("type", out var tyOff) ||
+            !model.NpcFields.TryGetValue("townNPC", out var tnOff)) { AppendLog("NPC offsets unavailable."); return; }
+        int removed = 0;
+        lock (_engine.Sync)
+        {
+            removed += RemoveNpcOn(_engine.Mem, model.NpcArray, aOff, tyOff, tnOff, type); // host client / SP
+            var smem = _target.Ensure();
+            if (smem != null && _target.IsServer)
+            {
+                ulong sa = ServerNpcArray(_target.Pid);
+                if (sa != 0) removed += RemoveNpcOn(smem, sa, aOff, tyOff, tnOff, type);   // authoritative server
+            }
+        }
+        AppendLog(removed > 0 ? $"Removed {name}." : $"{name}: not found in the world.");
+    }
+
+    private static int RemoveNpcOn(Memory.ProcessMemory? m, ulong npcArrAddr, int aOff, int tyOff, int tnOff, int type)
+    {
+        if (m == null || npcArrAddr == 0) return 0;
+        IntPtr arr = m.ReadPtr64((IntPtr)npcArrAddr);
+        if (arr == IntPtr.Zero) return 0;
+        int len = m.ReadInt32((IntPtr)(arr.ToInt64() + 8));
+        if (len <= 0 || len > 1000) len = 200;
+        byte[] ptrs = m.ReadBytes((IntPtr)(arr.ToInt64() + 0x10), len * 8);
+        if (ptrs.Length < len * 8) return 0;
+        int n = 0;
+        for (int i = 0; i < len; i++)
+        {
+            long b = BitConverter.ToInt64(ptrs, i * 8);
+            if (b == 0) continue;
+            try
+            {
+                if (m.ReadByte((IntPtr)(b + aOff)) == 0 || m.ReadByte((IntPtr)(b + tnOff)) == 0) continue;
+                if (m.ReadInt32((IntPtr)(b + tyOff)) != type) continue;
+                m.WriteByte((IntPtr)(b + aOff), 0); // active = false → despawn
+                n++;
+            }
+            catch { }
+        }
+        return n;
     }
 
     // On-demand world events — run on the world-authoritative process (auto-detects the MP server).
@@ -1057,6 +1136,7 @@ public sealed class TmlForm : Form
             else if (r.Kind == RowKind.SpawnBoost) { _spawnBoost.Disable(); }
             else if (r.Kind == RowKind.RareSpawn) { _rareSpawn.Disable(); }
             else if (r.Kind == RowKind.Aimbot) { _aimbot.Disable(); }
+            else if (r.Kind == RowKind.AbyssVision) { _abyssVision.Disable(); }
             else if (r.Kind == RowKind.TileReach) { _tileReach.Disable(); }
             else if (r.Kind == RowKind.MaxMinions) { _maxMinions.Disable(); }
         }

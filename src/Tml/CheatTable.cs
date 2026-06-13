@@ -4,7 +4,7 @@ using TerrariaTrainer.Cheats;
 
 namespace TerrariaTrainer.Tml;
 
-public enum RowKind { GroupHeader, Value, Toggle, Buff, Action, Inject, Fast, UseHook, Tools, Craft, Patch, Vanity, PatchSet, DropMult, Crate, ScopedDrop, BuffClear, PatchInt, InfAmmo, SpawnBoost, RareSpawn, Aimbot, SprayRange, TileReach, AnglerQuest, MaxMinions }
+public enum RowKind { GroupHeader, Value, Toggle, Buff, Action, Inject, Fast, UseHook, Tools, Craft, Patch, Vanity, PatchSet, DropMult, Crate, ScopedDrop, BuffClear, PatchInt, InfAmmo, SpawnBoost, RareSpawn, Aimbot, SprayRange, TileReach, AnglerQuest, MaxMinions, AbyssVision }
 
 /// <summary>A single row in the Cheat-Engine-style table.</summary>
 public sealed class CheatRow
@@ -107,6 +107,12 @@ public static class CheatTable
                 rows.Add(new CheatRow { Kind = RowKind.SpawnBoost, Group = d.Group, Desc = d.Desc, PatchMethod = d.Method ?? "max", InjectValue = d.Value ?? "60" });
                 continue;
             }
+            if (d.Kind.Equals("abyssvision", StringComparison.OrdinalIgnoreCase))
+            {
+                EmitGroup(rows, ref lastGroup, d.Group);
+                rows.Add(new CheatRow { Kind = RowKind.AbyssVision, Group = d.Group, Desc = d.Desc });
+                continue;
+            }
             if (d.Kind.Equals("aimbot", StringComparison.OrdinalIgnoreCase))
             {
                 EmitGroup(rows, ref lastGroup, d.Group);
@@ -206,7 +212,7 @@ public static class CheatTable
 
         // ---- town NPC roster ----
         EmitGroup(rows, ref lastGroup, "🏠 Town NPCs");
-        rows.Add(new CheatRow { Kind = RowKind.Action, Group = "🏠 Town NPCs", Desc = "Show town NPCs not yet arrived (click)" });
+        rows.Add(new CheatRow { Kind = RowKind.Action, Group = "🏠 Town NPCs", Desc = "Town NPCs — summon missing / remove present (click)" });
 
         // ---- on-demand world events (server-authoritative) ----
         EmitGroup(rows, ref lastGroup, "🌩️ Events (on-demand)");

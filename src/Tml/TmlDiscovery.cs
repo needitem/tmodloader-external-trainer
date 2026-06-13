@@ -349,6 +349,34 @@ public static class TmlDiscovery
         return result;
     }
 
+    /// <summary>Resolve what's needed to read/write CalamityPlayer instance fields directly: the
+    /// <c>Player.modPlayers</c> array offset, CalamityPlayer's MethodTable (to find its slot), and the
+    /// object-base offset of each requested field. Returns null if Calamity isn't loaded. Pure metadata.</summary>
+    public static (int mpOff, ulong calMT, Dictionary<string, int> offs)? ResolveCalamityFields(int pid, params string[] fields)
+    {
+        try
+        {
+            using var dt = DataTarget.CreateSnapshotAndAttach(pid);
+            var clr = dt.ClrVersions.FirstOrDefault();
+            if (clr == null) return null;
+            using var runtime = clr.CreateRuntime();
+            var playerT = FindType(runtime, "Terraria.Player");
+            var calT = FindType(runtime, "CalamityMod.CalPlayer.CalamityPlayer");
+            if (playerT == null || calT == null) return null; // no Calamity
+            var mpF = playerT.GetFieldByName("modPlayers");
+            if (mpF == null) return null;
+            var offs = new Dictionary<string, int>();
+            foreach (var name in fields)
+            {
+                var f = calT.GetFieldByName(name);
+                if (f != null) offs[name] = f.Offset + HeaderSize;
+            }
+            if (offs.Count == 0) return null;
+            return (mpF.Offset + HeaderSize, calT.MethodTable, offs);
+        }
+        catch { return null; }
+    }
+
     /// <summary>Resolve a single method's live native address, disambiguating overloads by a substring of
     /// the signature (e.g. "DropAttemptInfo" to pick the rule-based CommonCode.DropItem). Returns 0 if not
     /// found / not yet jitted.</summary>
