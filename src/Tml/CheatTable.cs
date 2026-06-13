@@ -204,6 +204,10 @@ public static class CheatTable
         rows.Add(new CheatRow { Kind = RowKind.Action, Group = "🛒 Traveling Merchant", Desc = "Summon Traveling Merchant — make him arrive (click)" });
         rows.Add(new CheatRow { Kind = RowKind.Action, Group = "🛒 Traveling Merchant", Desc = "Re-roll Traveling Merchant stock (click)" });
 
+        // ---- town NPC roster ----
+        EmitGroup(rows, ref lastGroup, "🏠 Town NPCs");
+        rows.Add(new CheatRow { Kind = RowKind.Action, Group = "🏠 Town NPCs", Desc = "Show town NPCs not yet arrived (click)" });
+
         // ---- on-demand world events (server-authoritative) ----
         EmitGroup(rows, ref lastGroup, "🌩️ Events (on-demand)");
         foreach (var ev in new[]

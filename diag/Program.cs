@@ -1592,6 +1592,17 @@ if (mode == "fields")
     return 0;
 }
 
+if (mode == "townnpcs") // dump the town-NPC roster + which are currently present
+{
+    using var engine = new TmlEngine();
+    engine.Attach();
+    var roster = TmlDiscovery.EnumerateTownNpcs(proc.Id);
+    var present = engine.ActiveTownNpcTypes();
+    Console.WriteLine($"town roster: {roster.Count}; present now: {present.Count}");
+    foreach (var x in roster) Console.WriteLine($"  {(present.Contains(x.type) ? "✓" : " ")} {x.name} (#{x.type})");
+    return 0;
+}
+
 if (mode == "modplayers") // dump Player.modPlayers[] entry types (find CalamityPlayer's index)
 {
     using var engine = new TmlEngine();
@@ -1624,19 +1635,6 @@ if (mode == "scanfields") // scanfields <substr> — every type's fields matchin
 if (mode == "listfields") // listfields <sub> <type>
 {
     ClrDiscovery.ListFields(proc.Id, args.Length > 1 ? args[1] : "", args.Length > 2 ? args[2] : "Terraria.Projectile");
-    return 0;
-}
-
-if (mode == "projfields")
-{
-    using var engine = new TmlEngine();
-    engine.Attach();
-    Console.WriteLine("Projectile fields (offset from object base):");
-    foreach (var kv in engine.Model!.ProjectileFields.OrderBy(k => k.Value))
-        Console.WriteLine($"  {kv.Key,-12} +0x{kv.Value:X}");
-    Console.WriteLine("\nNPC position/active for cross-check:");
-    foreach (var n in new[] { "active", "position", "width", "height", "friendly", "townNPC", "life" })
-        if (engine.Model!.NpcFields.TryGetValue(n, out var o)) Console.WriteLine($"  npc.{n,-10} +0x{o:X}");
     return 0;
 }
 

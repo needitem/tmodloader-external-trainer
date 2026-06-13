@@ -304,6 +304,36 @@ public sealed class TmlEngine : IDisposable
         return n;
     }
 
+    /// <summary>Types of town NPCs currently active in the world (one read of the NPC array). Compared
+    /// against the full town roster to see which residents haven't arrived.</summary>
+    public HashSet<int> ActiveTownNpcTypes()
+    {
+        var set = new HashSet<int>();
+        var m = Mem;
+        if (m == null || Model == null || Model.NpcArray == 0) return set;
+        if (!Model.NpcFields.TryGetValue("active", out var aOff) ||
+            !Model.NpcFields.TryGetValue("townNPC", out var tOff) ||
+            !Model.NpcFields.TryGetValue("type", out var tyOff)) return set;
+        IntPtr arr = m.ReadPtr64((IntPtr)Model.NpcArray);
+        if (arr == IntPtr.Zero) return set;
+        int len = m.ReadInt32((IntPtr)(arr.ToInt64() + 8));
+        if (len <= 0 || len > 1000) len = 200;
+        byte[] ptrs = m.ReadBytes((IntPtr)(arr.ToInt64() + ArrayData), len * 8);
+        if (ptrs.Length < len * 8) return set;
+        for (int i = 0; i < len; i++)
+        {
+            long b = BitConverter.ToInt64(ptrs, i * 8);
+            if (b == 0) continue;
+            try
+            {
+                if (m.ReadByte((IntPtr)(b + aOff)) == 0 || m.ReadByte((IntPtr)(b + tOff)) == 0) continue;
+                set.Add(m.ReadInt32((IntPtr)(b + tyOff)));
+            }
+            catch { }
+        }
+        return set;
+    }
+
     // ---- buff helpers (int[] arrays) ----
 
     public (IntPtr id, IntPtr time, int len) BuffArrays()

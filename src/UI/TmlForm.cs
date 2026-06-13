@@ -78,6 +78,7 @@ public sealed class TmlForm : Form
     // Renders a world overview highlighting Corruption / Crimson / Hallow (on-demand snapshot).
     private readonly WorldMapScanner _mapScanner;
     private List<(int type, int stars, string name)> _rareNpcs = new();
+    private List<(int type, string name)> _townNpcs = new(); // full town roster (lazy-loaded on first use)
     private int _rareSelType; // last-picked rare mob type (fallback for the toggle)
 
     [DllImport("winmm.dll")] private static extern uint timeBeginPeriod(uint ms);
@@ -872,8 +873,43 @@ public sealed class TmlForm : Form
             lock (_engine.Sync) AppendLog(_travelShop.Reroll()
                 ? "Traveling Merchant stock re-rolled — re-open the shop to see new items."
                 : $"Re-roll failed: {_travelShop.Status}");
+        else if (r.Desc.StartsWith("Show town NPCs"))
+            ShowMissingTownNpcs();
         else
             TriggerEvent(r.Desc);
+    }
+
+    private void ShowMissingTownNpcs()
+    {
+        if (!_engine.Attached || _engine.Proc == null) { AppendLog("Attach to a world first."); return; }
+        if (_townNpcs.Count == 0)
+        {
+            try { _townNpcs = TmlDiscovery.EnumerateTownNpcs(_engine.Proc.Id); } catch { _townNpcs = new(); }
+            if (_townNpcs.Count == 0) { AppendLog("Couldn't load the town-NPC roster."); return; }
+        }
+        HashSet<int> present;
+        lock (_engine.Sync) present = _engine.ActiveTownNpcTypes();
+        var absent = _townNpcs.Where(x => !present.Contains(x.type)).ToList();
+        var here = _townNpcs.Where(x => present.Contains(x.type)).ToList();
+        AppendLog($"Town NPCs: {here.Count} present, {absent.Count} not yet arrived.");
+
+        using var dlg = new Form
+        {
+            Text = $"Town NPCs — {absent.Count} not yet arrived", Width = 420, Height = 540,
+            StartPosition = FormStartPosition.CenterParent, FormBorderStyle = FormBorderStyle.FixedDialog,
+            MaximizeBox = false, MinimizeBox = false, Font = Font,
+        };
+        var list = new ListBox { Dock = DockStyle.Fill, IntegralHeight = false };
+        var close = new Button { Text = "Close", Dock = DockStyle.Bottom, Height = 34 };
+        list.Items.Add($"— NOT YET ARRIVED ({absent.Count}) —");
+        foreach (var x in absent) list.Items.Add($"   {x.name}  (#{x.type})");
+        list.Items.Add("");
+        list.Items.Add($"— ALREADY IN TOWN ({here.Count}) —");
+        foreach (var x in here) list.Items.Add($"   ✓ {x.name}  (#{x.type})");
+        close.Click += (_, _) => dlg.Close();
+        dlg.Controls.Add(list); dlg.Controls.Add(close);
+        dlg.CancelButton = close;
+        dlg.ShowDialog(this);
     }
 
     // On-demand world events — run on the world-authoritative process (auto-detects the MP server).

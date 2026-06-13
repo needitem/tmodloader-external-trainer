@@ -480,6 +480,55 @@ public static class TmlDiscovery
         return outList.OrderByDescending(x => x.Item2).ThenBy(x => x.Item3).ToList();
     }
 
+    /// <summary>The full town-NPC roster (vanilla + modded) from ContentSamples: every NPC type whose sample
+    /// has townNPC=true, with its display name. Bound/quest NPCs aren't townNPC until freed, so they're
+    /// excluded automatically. Caller compares against the live world to see who hasn't arrived.</summary>
+    public static List<(int type, string name)> EnumerateTownNpcs(int pid)
+    {
+        var outList = new List<(int, string)>();
+        using var dt = DataTarget.CreateSnapshotAndAttach(pid);
+        var clr = dt.ClrVersions.FirstOrDefault();
+        if (clr == null) return outList;
+        using var runtime = clr.CreateRuntime();
+        var cs = FindType(runtime, "Terraria.ID.ContentSamples");
+        if (cs == null) return outList;
+
+        ClrObject ReadStatic(ClrType t, string name)
+        {
+            var f = t.GetStaticFieldByName(name);
+            if (f == null) return default;
+            foreach (var d in runtime.AppDomains) { try { var o = f.ReadObject(d); if (o.IsValid) return o; } catch { } }
+            return default;
+        }
+
+        var lang = FindType(runtime, "Terraria.Lang");
+        var namesObj = lang != null ? ReadStatic(lang, "_npcNameCache") : default;
+        bool haveNames = namesObj.IsValid;
+        var names = haveNames ? namesObj.AsArray() : default;
+
+        var samples = ReadStatic(cs, "NpcsByNetId");
+        if (!samples.IsValid) return outList;
+        try
+        {
+            int sc = samples.ReadField<int>("_count");
+            var sen = samples.ReadObjectField("_entries").AsArray();
+            for (int i = 0; i < sc; i++)
+            {
+                var e = sen.GetStructValue(i);
+                int type; ClrObject npc;
+                try { type = e.ReadField<int>("key"); npc = e.ReadObjectField("value"); } catch { continue; }
+                if (type <= 0 || !npc.IsValid) continue;
+                try { if (!npc.ReadField<bool>("townNPC")) continue; } catch { continue; }
+                string nm = "";
+                try { if (haveNames && type < names.Length) { var lt = names.GetObjectValue(type); if (lt.IsValid) nm = lt.ReadStringField("_value") ?? ""; } } catch { }
+                if (string.IsNullOrWhiteSpace(nm)) nm = $"NPC {type}";
+                outList.Add((type, nm));
+            }
+        }
+        catch { }
+        return outList.OrderBy(x => x.Item2).ToList();
+    }
+
     /// <summary>Locate the live <c>Terraria.TileTypeData[]</c> array (tModLoader's struct-of-arrays
     /// tile-type storage) so it can be bulk-read via RPM. Returns the address of the first element
     /// (object + 0x10), the element count, and the world dims. The array is ~40 MB so it lives on the
