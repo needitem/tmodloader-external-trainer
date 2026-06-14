@@ -369,7 +369,7 @@ public sealed class TmlForm : Form
         _invGrid.BorderStyle = BorderStyle.None;
         _invGrid.EnableHeadersVisualStyles = false;
         _invGrid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Slot", Name = "slot", ReadOnly = true, Width = 90 });
-        _invGrid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Item", Name = "name", ReadOnly = true, Width = 210, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill });
+        _invGrid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Item", Name = "name", ReadOnly = true, Width = 210, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, ToolTipText = "Double-click to pick an item by name." });
         _invGrid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Count", Name = "stack", Width = 70, ToolTipText = "Stack — quantity. Double-click to edit." });
         _invGrid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Max", Name = "maxStack", ReadOnly = true, Width = 60, ToolTipText = "Max stack for this item." });
         _invGrid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Modifier", Name = "modifier", ReadOnly = true, Width = 110, ToolTipText = "Prefix name (e.g. Legendary)." });
@@ -377,6 +377,61 @@ public sealed class TmlForm : Form
         _invGrid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Pfx#", Name = "prefix", Width = 55, ToolTipText = "Prefix number. Editable." });
         foreach (DataGridViewColumn c in _invGrid.Columns) c.SortMode = DataGridViewColumnSortMode.NotSortable;
         _invGrid.CellEndEdit += InvGrid_CellEndEdit;
+        _invGrid.CellDoubleClick += InvGrid_CellDoubleClick;
+    }
+
+    private List<(int type, string name)> _allItems = new(); // full item roster (lazy-loaded for the picker)
+
+    private void InvGrid_CellDoubleClick(object? sender, DataGridViewCellEventArgs e)
+    {
+        if (e.RowIndex < 0) return;
+        var row = _invGrid.Rows[e.RowIndex];
+        if (row.Tag is not int slot) return;
+        if (_invGrid.Columns[e.ColumnIndex].Name == "name") OpenItemPicker(slot);
+    }
+
+    private void OpenItemPicker(int slot)
+    {
+        if (!_engine.Attached) { AppendLog("Attach to a world first."); return; }
+        if (_allItems.Count == 0)
+        {
+            lock (_engine.Sync) { try { _allItems = _engine.EnumerateItems(); } catch { _allItems = new(); } }
+            if (_allItems.Count == 0) { AppendLog("Couldn't load the item list."); return; }
+        }
+        using var dlg = new Form
+        {
+            Text = "Pick an item", Width = 460, Height = 560,
+            StartPosition = FormStartPosition.CenterParent, FormBorderStyle = FormBorderStyle.FixedDialog,
+            MaximizeBox = false, MinimizeBox = false, Font = Font,
+        };
+        var search = new TextBox { Dock = DockStyle.Top, PlaceholderText = "type to filter by name or id…" };
+        var list = new ListBox { Dock = DockStyle.Fill, IntegralHeight = false };
+        var ok = new Button { Text = "Give", Dock = DockStyle.Bottom, Height = 34 };
+        void Fill(string f)
+        {
+            list.BeginUpdate(); list.Items.Clear();
+            foreach (var x in _allItems)
+                if (f.Length == 0 || x.name.Contains(f, StringComparison.OrdinalIgnoreCase) || x.type.ToString() == f)
+                    list.Items.Add($"{x.name}  (#{x.type})");
+            list.EndUpdate();
+        }
+        Fill("");
+        search.TextChanged += (_, _) => Fill(search.Text.Trim());
+        list.DoubleClick += (_, _) => { if (list.SelectedItem != null) ok.PerformClick(); };
+        ok.Click += (_, _) => { dlg.DialogResult = DialogResult.OK; dlg.Close(); };
+        dlg.Controls.Add(list); dlg.Controls.Add(search); dlg.Controls.Add(ok);
+        dlg.AcceptButton = ok;
+        if (dlg.ShowDialog(this) != DialogResult.OK || list.SelectedItem is not { } sel) return;
+        string s = sel.ToString() ?? "";
+        int lp = s.LastIndexOf("(#", StringComparison.Ordinal);
+        if (lp < 0 || !int.TryParse(s.Substring(lp + 2).TrimEnd(')', ' '), out int type)) return;
+        lock (_engine.Sync)
+        {
+            _engine.SetItemInt(slot, "type", type);
+            if (_engine.ItemInt(slot, "stack") <= 0) _engine.SetItemInt(slot, "stack", 1);
+            _engine.SetItemInt(slot, "prefix", 0);
+        }
+        AppendLog($"Slot {slot}: gave {_engine.ItemName(type)} (#{type}).");
     }
 
     private static string SlotLabel(int i) => i switch
@@ -465,6 +520,7 @@ public sealed class TmlForm : Form
             _aimbot.Clear();
             _abyssVision.Clear();
             try { _rareNpcs = TmlDiscovery.EnumerateRareNpcs(_engine.Proc!.Id, 2); AppendLog($"Loaded {_rareNpcs.Count} rare mobs for the spawn picker."); } catch { _rareNpcs = new(); }
+            _townNpcs = new(); _allItems = new(); // re-lazy-load these per world (mod set may differ)
             CacheVitalFields();
             lock (_engine.Sync) LoadAndApplyConfig(); // restore previously-enabled cheats
             RebuildGrid();

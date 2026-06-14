@@ -1592,6 +1592,17 @@ if (mode == "fields")
     return 0;
 }
 
+if (mode == "itemlist") // itemlist [filter] — dump the item roster (for the inventory picker)
+{
+    using var engine = new TmlEngine(); engine.Attach();
+    var list = engine.EnumerateItems();
+    string f = args.Length > 1 ? args[1] : "";
+    Console.WriteLine($"items: {list.Count} total" + (f.Length > 0 ? $"; filter='{f}'" : ""));
+    foreach (var x in list.Where(x => f.Length == 0 || x.name.Contains(f, StringComparison.OrdinalIgnoreCase)).Take(40))
+        Console.WriteLine($"  #{x.type} {x.name}");
+    return 0;
+}
+
 if (mode == "rarelist") // dump the Force-Rare-Spawn list; flag modded (type>688) entries
 {
     var list = TmlDiscovery.EnumerateRareNpcs(proc.Id, 2);

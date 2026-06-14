@@ -375,6 +375,29 @@ public sealed class TmlEngine : IDisposable
         return n;
     }
 
+    /// <summary>Every item type (vanilla + modded) with its display name, for the inventory item picker.
+    /// Reads the localized item-name cache array (one ptr-deref + a name per entry); no ClrMD snapshot.</summary>
+    public List<(int type, string name)> EnumerateItems()
+    {
+        var outList = new List<(int, string)>();
+        var m = Mem;
+        if (m == null || Model == null || Model.StaticItemNameCache == 0) return outList;
+        try
+        {
+            IntPtr arr = m.ReadPtr64((IntPtr)Model.StaticItemNameCache);
+            if (arr == IntPtr.Zero) return outList;
+            int len = m.ReadInt32((IntPtr)(arr.ToInt64() + 8));
+            if (len <= 1 || len > 100000) return outList;
+            for (int i = 1; i < len; i++)
+            {
+                string n = ItemName(i);
+                if (!string.IsNullOrWhiteSpace(n)) outList.Add((i, n));
+            }
+        }
+        catch { }
+        return outList.OrderBy(x => x.Item2).ToList();
+    }
+
     public string PrefixName(int prefix)
     {
         if (prefix <= 0) return "";
