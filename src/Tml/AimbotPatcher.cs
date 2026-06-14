@@ -40,7 +40,7 @@ public sealed class AimbotPatcher
     private TmlModel? _cachedModel;
     private int _oCtrlUse, _oPos, _oSelItem, _invOff;                      // Player
     private int _itPick, _itAxe, _itHammer, _itDamage, _itShootSpeed;      // held Item
-    private int _nActive, _nPos, _nWidth, _nHeight, _nFriendly, _nTown, _nBoss, _nLife, _nDamage; // NPC
+    private int _nActive, _nPos, _nWidth, _nHeight, _nFriendly, _nTown, _nBoss, _nLife, _nDamage, _nDontTake, _nLifeMax; // NPC
     private int _npcBlock;
     private byte[] _npcBuf = Array.Empty<byte>();
 
@@ -231,11 +231,13 @@ public sealed class AimbotPatcher
             _itPick = I("pick"); _itAxe = I("axe"); _itHammer = I("hammer"); _itDamage = I("damage"); _itShootSpeed = I("shootSpeed");
             _nActive = N("active"); _nPos = N("position"); _nWidth = N("width"); _nHeight = N("height");
             _nFriendly = N("friendly"); _nTown = N("townNPC"); _nBoss = N("boss"); _nLife = N("life"); _nDamage = N("damage");
+            _nDontTake = N("dontTakeDamage"); _nLifeMax = N("lifeMax");
 
             int max = 8;
             void Cover(int off, int size) { if (off >= 0 && off + size > max) max = off + size; }
             Cover(_nActive, 1); Cover(_nPos, 8); Cover(_nWidth, 4); Cover(_nHeight, 4);
             Cover(_nFriendly, 1); Cover(_nTown, 1); Cover(_nBoss, 1); Cover(_nLife, 4); Cover(_nDamage, 4);
+            Cover(_nDontTake, 1); Cover(_nLifeMax, 4);
             _npcBlock = max;
             _npcBuf = new byte[_npcBlock];
         }
@@ -289,6 +291,8 @@ public sealed class AimbotPatcher
             if (!BB(_nActive)) continue;
             if (BB(_nFriendly) || BB(_nTown)) continue;                     // skip friendlies / town NPCs
             if (BI(_nLife) <= 0) continue;
+            if (_nDontTake >= 0 && BB(_nDontTake)) continue;                // invulnerable — can't be hit
+            if (_nLifeMax >= 0 && BI(_nLifeMax) <= 0) continue;             // no max HP = a non-damageable object
             bool boss = BB(_nBoss);
             // (No damage>0 filter: that field's offset can be wrong on the patched type and would
             //  wrongly drop real enemies — better to occasionally target a critter than miss a mob.)
