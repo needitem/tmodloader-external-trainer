@@ -31,7 +31,8 @@ public sealed class AimbotPatcher
     private int _lastSetX = -9999, _lastSetY = -9999; // last client px WE moved the cursor to (cursor mode)
     private Kalman1D _kx, _ky;              // per-target motion estimate (X / Y)
     private int _kalTarget = -1;            // which slot the Kalman is tracking (reset on switch)
-    private long _lastAimMs;                // for the Kalman dt
+    private float _lastMeasX, _lastMeasY;   // last DISTINCT center fed to the Kalman
+    private long _lastMeasMs;               // time of that measurement (for the real dt)
     private const int MaxNpcs = 200;        // Terraria's Main.maxNPCs
     private const int ArrayData = 0x10;     // MethodTable(8) + length(8)
 
@@ -135,7 +136,7 @@ public sealed class AimbotPatcher
         var pt = new Native.POINT { X = cliX, Y = cliY };
         if (Native.ClientToScreen(hwnd, ref pt)) Native.SetCursorPos(pt.X, pt.Y);
         _lastSetX = cliX; _lastSetY = cliY; // remember where WE put it, to detect the user moving it
-        _status = "aiming" + (_nearCursor ? " — cursor" : _preferBoss ? " — boss" : "") + (led ? " + lead" : "");
+        _status = "aiming" + (_nearCursor ? " — cursor" : _preferBoss ? " — boss" : "") + (_predict ? " + lead" + _leadDbg : "");
     }
 
     /// <summary>Run the Kalman on the current target's center and rewrite (tx,ty) to the intercept point:
@@ -144,15 +145,25 @@ public sealed class AimbotPatcher
     private bool Lead(ProcessMemory m, IntPtr pb, float px, float py, ref float tx, ref float ty)
     {
         long now = Environment.TickCount64;
-        double dt = (now - _lastAimMs) * 60.0 / 1000.0;   // ms → frames (Terraria is 60 fps)
-        _lastAimMs = now;
-        if (_kalTarget != _targetIndex || dt <= 0 || dt > 20) { _kx.Reset(); _ky.Reset(); _kalTarget = _targetIndex; dt = 1; }
-        _kx.Update(tx, dt, 1.5, 4.0);
-        _ky.Update(ty, dt, 1.5, 4.0);
+        if (_kalTarget != _targetIndex)                    // new target → restart the estimate
+        { _kx.Reset(); _ky.Reset(); _kalTarget = _targetIndex; _lastMeasX = tx; _lastMeasY = ty; _lastMeasMs = now; }
+
+        // Only feed the Kalman when the center actually MOVED (a fresh game frame). The aimbot ticks far
+        // faster than the 60 fps sim, so updating every tick with repeated samples would smother the
+        // velocity estimate toward zero. Update on change, with the real elapsed time as dt.
+        if (tx != _lastMeasX || ty != _lastMeasY)
+        {
+            double dt = (now - _lastMeasMs) * 60.0 / 1000.0; // ms → frames
+            if (dt <= 0 || dt > 20) dt = 1;
+            _kx.Update(tx, dt, 1.5, 4.0);
+            _ky.Update(ty, dt, 1.5, 4.0);
+            _lastMeasX = tx; _lastMeasY = ty; _lastMeasMs = now;
+        }
 
         float speed = HeldShootSpeed(m, pb);
-        if (speed < 1f) return false;                      // not a projectile weapon → aim at current pos
         float vx = (float)_kx.Vel, vy = (float)_ky.Vel;    // px / frame
+        _leadDbg = $" [spd{speed:0.0} v{Math.Sqrt(vx * vx + vy * vy):0.0}]";
+        if (speed < 1f) return false;                      // not a projectile weapon → aim at current pos
 
         float ax = tx, ay = ty;
         for (int i = 0; i < 4; i++)                         // converge on the intercept time
@@ -164,6 +175,7 @@ public sealed class AimbotPatcher
         tx = ax; ty = ay;
         return true;
     }
+    private string _leadDbg = "";
 
     /// <summary>The held item's shootSpeed (initial projectile velocity, px/frame); 0 if none/unknown.</summary>
     private float HeldShootSpeed(ProcessMemory m, IntPtr pb)
