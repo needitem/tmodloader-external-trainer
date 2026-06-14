@@ -24,17 +24,21 @@ public sealed class AimbotPatcher
     private volatile bool _enabled;
     private volatile bool _preferBoss;
     private volatile bool _nearCursor;      // pick the enemy nearest the MOUSE, not the character
+    private volatile bool _predict;         // lead moving targets (Kalman velocity * projectile travel time)
     private string _status = "off";
 
     private int _targetIndex = -1;          // sticky: held until the enemy dies/despawns
     private int _lastSetX = -9999, _lastSetY = -9999; // last client px WE moved the cursor to (cursor mode)
+    private Kalman1D _kx, _ky;              // per-target motion estimate (X / Y)
+    private int _kalTarget = -1;            // which slot the Kalman is tracking (reset on switch)
+    private long _lastAimMs;                // for the Kalman dt
     private const int MaxNpcs = 200;        // Terraria's Main.maxNPCs
     private const int ArrayData = 0x10;     // MethodTable(8) + length(8)
 
     // Cached offsets (resolved once per TmlModel; -1 = field absent).
     private TmlModel? _cachedModel;
     private int _oCtrlUse, _oPos, _oSelItem, _invOff;                      // Player
-    private int _itPick, _itAxe, _itHammer, _itDamage;                     // held Item
+    private int _itPick, _itAxe, _itHammer, _itDamage, _itShootSpeed;      // held Item
     private int _nActive, _nPos, _nWidth, _nHeight, _nFriendly, _nTown, _nBoss, _nLife, _nDamage; // NPC
     private int _npcBlock;
     private byte[] _npcBuf = Array.Empty<byte>();
@@ -46,6 +50,7 @@ public sealed class AimbotPatcher
 
     public void SetPreferBoss(bool v) => _preferBoss = v;
     public void SetNearCursor(bool v) => _nearCursor = v;
+    public void SetPredict(bool v) { _predict = v; if (!v) _kalTarget = -1; }
     public void Enable() => _enabled = true;
     public void Disable() { _enabled = false; _targetIndex = -1; _lastSetX = _lastSetY = -9999; _status = "off"; }
     /// <summary>Drop transient state (e.g. on detach); no memory to restore.</summary>
@@ -117,6 +122,11 @@ public sealed class AimbotPatcher
             { _targetIndex = -1; _status = "no on-screen target"; return; }
         }
 
+        // Predictive lead: estimate the target's velocity (Kalman) and aim where it WILL be when the
+        // projectile arrives, so fast/moving targets get hit instead of trailed.
+        bool led = false;
+        if (_predict) led = Lead(m, pb, px, py, ref tx, ref ty);
+
         // Aim: the player sits at the screen center, so the target's client pixel is
         // center + (target - player) * zoom (world units = screen px at zoom 1).
         int cliX = Math.Clamp((int)(w / 2f + (tx - px) * zoom), 0, w - 1);
@@ -125,7 +135,47 @@ public sealed class AimbotPatcher
         var pt = new Native.POINT { X = cliX, Y = cliY };
         if (Native.ClientToScreen(hwnd, ref pt)) Native.SetCursorPos(pt.X, pt.Y);
         _lastSetX = cliX; _lastSetY = cliY; // remember where WE put it, to detect the user moving it
-        _status = "aiming" + (_nearCursor ? " — cursor" : _preferBoss ? " — boss" : "");
+        _status = "aiming" + (_nearCursor ? " — cursor" : _preferBoss ? " — boss" : "") + (led ? " + lead" : "");
+    }
+
+    /// <summary>Run the Kalman on the current target's center and rewrite (tx,ty) to the intercept point:
+    /// target_pos + target_vel · travel_time, where travel_time = distance / projectile_speed (both in
+    /// game px / px-per-frame). No-ops (returns false) if the held weapon has no shoot speed (melee, etc.).</summary>
+    private bool Lead(ProcessMemory m, IntPtr pb, float px, float py, ref float tx, ref float ty)
+    {
+        long now = Environment.TickCount64;
+        double dt = (now - _lastAimMs) * 60.0 / 1000.0;   // ms → frames (Terraria is 60 fps)
+        _lastAimMs = now;
+        if (_kalTarget != _targetIndex || dt <= 0 || dt > 20) { _kx.Reset(); _ky.Reset(); _kalTarget = _targetIndex; dt = 1; }
+        _kx.Update(tx, dt, 1.5, 4.0);
+        _ky.Update(ty, dt, 1.5, 4.0);
+
+        float speed = HeldShootSpeed(m, pb);
+        if (speed < 1f) return false;                      // not a projectile weapon → aim at current pos
+        float vx = (float)_kx.Vel, vy = (float)_ky.Vel;    // px / frame
+
+        float ax = tx, ay = ty;
+        for (int i = 0; i < 4; i++)                         // converge on the intercept time
+        {
+            float t = (float)(Math.Sqrt((ax - px) * (ax - px) + (ay - py) * (ay - py)) / speed);
+            if (t > 240) t = 240;                           // cap lead (4s) so a near-zero speed can't fling it
+            ax = tx + vx * t; ay = ty + vy * t;
+        }
+        tx = ax; ty = ay;
+        return true;
+    }
+
+    /// <summary>The held item's shootSpeed (initial projectile velocity, px/frame); 0 if none/unknown.</summary>
+    private float HeldShootSpeed(ProcessMemory m, IntPtr pb)
+    {
+        if (_itShootSpeed < 0 || _oSelItem < 0 || _invOff <= 0) return 0f;
+        int sel = m.ReadInt32((IntPtr)(pb.ToInt64() + _oSelItem));
+        if (sel < 0 || sel > 58) return 0f;
+        IntPtr inv = m.ReadPtr64((IntPtr)(pb.ToInt64() + _invOff));
+        if (inv == IntPtr.Zero) return 0f;
+        IntPtr item = m.ReadPtr64((IntPtr)(inv.ToInt64() + ArrayData + sel * 8));
+        if (item == IntPtr.Zero) return 0f;
+        return m.ReadFloat((IntPtr)(item.ToInt64() + _itShootSpeed));
     }
 
     /// <summary>World render zoom (1.0 = default). Prefers the live SpriteViewMatrix zoom (what the
@@ -166,7 +216,7 @@ public sealed class AimbotPatcher
             int I(string n) => model.ItemFields.TryGetValue(n, out var o) ? o : -1;
             _oCtrlUse = P("controlUseItem"); _oPos = P("position");
             _oSelItem = P("selectedItem"); _invOff = model.InventoryOff;
-            _itPick = I("pick"); _itAxe = I("axe"); _itHammer = I("hammer"); _itDamage = I("damage");
+            _itPick = I("pick"); _itAxe = I("axe"); _itHammer = I("hammer"); _itDamage = I("damage"); _itShootSpeed = I("shootSpeed");
             _nActive = N("active"); _nPos = N("position"); _nWidth = N("width"); _nHeight = N("height");
             _nFriendly = N("friendly"); _nTown = N("townNPC"); _nBoss = N("boss"); _nLife = N("life"); _nDamage = N("damage");
 

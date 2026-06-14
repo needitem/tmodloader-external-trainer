@@ -1680,12 +1680,39 @@ if (mode == "abyssbright") // abyssbright <seconds> — continuously write Calam
     return 0;
 }
 
-if (mode == "homingpatch") // flip grapeBeer reset 0->1 in ResetEffects (homing, no buff)
+if (mode == "grantbuff") // grantbuff <id> <duration> — drop a buff into the local player's buff array (live test)
+{
+    int id = int.Parse(args[1]); int dur = args.Length > 2 ? int.Parse(args[2]) : 36000;
+    using var engine = new TmlEngine(); engine.Attach();
+    if (engine.PlayerBase() == IntPtr.Zero) { Console.WriteLine("no world"); return 0; }
+    var (bid, btm, len) = engine.BuffArrays(); var m = engine.Mem!;
+    if (bid == IntPtr.Zero) { Console.WriteLine("no buff arrays"); return 0; }
+    for (int i = 0; i < len; i++) { int t = m.ReadInt32(engine.BuffSlot(bid, i)); if (t == id || t == 0) { m.WriteInt32(engine.BuffSlot(bid, i), id); m.WriteInt32(engine.BuffSlot(btm, i), dur); Console.WriteLine($"buff {id} -> slot {i}, time {dur}"); return 0; } }
+    Console.WriteLine("no free buff slot");
+    return 0;
+}
+
+if (mode == "readcal") // readcal <offHex...> — read CalamityPlayer bytes at offsets (live)
+{
+    using var engine = new TmlEngine(); engine.Attach();
+    var m = engine.Mem!; var pb = engine.PlayerBase(); int pid = proc.Id;
+    if (pb == IntPtr.Zero) { Console.WriteLine("no world"); return 0; }
+    var r = TmlDiscovery.ResolveCalamityFields(pid, "grapeBeer");
+    if (r is not { } v) { Console.WriteLine("no Calamity"); return 0; }
+    IntPtr arr = m.ReadPtr64((IntPtr)(pb.ToInt64() + v.mpOff));
+    int len = m.ReadInt32((IntPtr)(arr.ToInt64() + 8)); IntPtr cp = IntPtr.Zero;
+    for (int i = 0; i < len && i < 200; i++) { var e = m.ReadPtr64((IntPtr)(arr.ToInt64() + 0x10 + i * 8)); if (e != IntPtr.Zero && (ulong)m.ReadInt64(e) == v.calMT) { cp = e; break; } }
+    if (cp == IntPtr.Zero) { Console.WriteLine("CalamityPlayer not found"); return 0; }
+    Console.WriteLine($"CalamityPlayer @0x{cp.ToInt64():X}");
+    for (int i = 1; i < args.Length; i++) { int off = Convert.ToInt32(args[i], 16); byte b = m.ReadBytes((IntPtr)(cp.ToInt64() + off), 1)[0]; Console.WriteLine($"  [0x{off:X}] = {b}"); }
+    return 0;
+}
+
+if (mode == "homingpatch") // homingpatch [offHex] — flip a CalamityPlayer bool reset 0->1 in ResetEffects
 {
     using var engine = new TmlEngine(); engine.Attach();
     var m = engine.Mem!; int pid = proc.Id;
-    var r = TmlDiscovery.ResolveCalamityFields(pid, "grapeBeer");
-    int gb = r?.offs.GetValueOrDefault("grapeBeer") ?? 0x79F;
+    int gb = args.Length > 1 ? Convert.ToInt32(args[1], 16) : 0x7E5;
     ulong a = ClrDiscovery.ResolveMethodCode(pid, "CalamityMod.CalPlayer.CalamityPlayer", "ResetEffects");
     if (a == 0) { Console.WriteLine("ResetEffects not jitted"); return 0; }
     var code = m.ReadBytes((IntPtr)a, 0x2600); var disp = BitConverter.GetBytes(gb); int pos = -1;

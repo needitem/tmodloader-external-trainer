@@ -33,7 +33,6 @@ public sealed class TmlForm : Form
     private string _lastRareStatus = "";
     private string _lastAimStatus = "";
     private string _lastAbyssStatus = "";
-    private string _lastHomingStatus = "";
     private int _rareLogTick;
     private int _sprayTick;
     private int _anglerTick;
@@ -67,8 +66,6 @@ public sealed class TmlForm : Form
     private readonly AimbotPatcher _aimbot;
     // Cancel Calamity's Abyss/cave screen darkness (runs in the high-freq writer loop).
     private readonly CalamityVisionPatcher _abyssVision;
-    // Force Calamity's Grape Beer homing flag (all projectiles home, no buff/debuff).
-    private readonly CalamityHomingPatcher _homing;
     // Block-reach extension by patching the per-frame reset in Player.ResetEffects (client-side).
     private readonly TileReachPatcher _tileReach;
     // Raises the summon-minion cap by patching the per-frame reset in Player.ResetEffects (client-side).
@@ -121,7 +118,6 @@ public sealed class TmlForm : Form
         _dropMult = new DropMultPatcher(_target);
         _aimbot = new AimbotPatcher(_engine);
         _abyssVision = new CalamityVisionPatcher(_engine);
-        _homing = new CalamityHomingPatcher(_engine);
         _tileReach = new TileReachPatcher(_engine);
         _maxMinions = new MaxMinionsPatcher(_engine);
         _travelShop = new TravelShopPatcher(_engine);
@@ -162,11 +158,10 @@ public sealed class TmlForm : Form
             try { if (_tileReach.Enabled) _tileReach.Tick(); } catch { }
             try { if (_maxMinions.Enabled) _maxMinions.Tick(); } catch { }
             try { if (_abyssVision.Enabled) _abyssVision.Tick(); } catch { }
-            try { if (_homing.Enabled) _homing.Tick(); } catch { }
             // Tiered-JIT relocations only happen while a method warms up (first seconds of use), so we
             // only need the costly ClrMD snapshots frequently right after a toggle; once settled, back
             // off to cut steady-state snapshot churn (each one forks the target process).
-            bool active = _sticky.AnyActive || _scopedDrop.Enabled || _spawnBoost.Enabled || _rareSpawn.Enabled || _tileReach.Enabled || _maxMinions.Enabled || _dropMult.Enabled || _abyssVision.Enabled || _homing.Enabled;
+            bool active = _sticky.AnyActive || _scopedDrop.Enabled || _spawnBoost.Enabled || _rareSpawn.Enabled || _tileReach.Enabled || _maxMinions.Enabled || _dropMult.Enabled || _abyssVision.Enabled;
             bool fast = Environment.TickCount64 < _stickyFastUntilMs || (_rareSpawn.Enabled && !_rareSpawn.ScopeLocked);
             Thread.Sleep(!active ? 1000 : fast ? 2500 : 6000);
         }
@@ -469,7 +464,6 @@ public sealed class TmlForm : Form
             _serverCaller.Clear();
             _aimbot.Clear();
             _abyssVision.Clear();
-            _homing.Clear();
             try { _rareNpcs = TmlDiscovery.EnumerateRareNpcs(_engine.Proc!.Id, 2); AppendLog($"Loaded {_rareNpcs.Count} rare mobs for the spawn picker."); } catch { _rareNpcs = new(); }
             CacheVitalFields();
             lock (_engine.Sync) LoadAndApplyConfig(); // restore previously-enabled cheats
@@ -816,10 +810,6 @@ public sealed class TmlForm : Form
                 if (r.Active) { float g = float.TryParse(r.InjectValue, out var gv) ? gv : 10f; _abyssVision.SetGlow(g); _abyssVision.Enable(); AppendLog($"ON: {r.Desc} → glow {g:0}"); }
                 else { _abyssVision.Disable(); AppendLog($"OFF: {r.Desc}"); }
                 break;
-            case RowKind.Homing:
-                if (r.Active) _homing.Enable(); else _homing.Disable();
-                AppendLog($"{(r.Active ? "ON" : "OFF")}: {r.Desc}");
-                break;
             case RowKind.BuffClear:
                 // the high-frequency writer removes the buff each tick while active.
                 AppendLog($"{(r.Active ? "Enabled" : "Disabled")} {r.Desc}");
@@ -1157,7 +1147,6 @@ public sealed class TmlForm : Form
             else if (r.Kind == RowKind.RareSpawn) { _rareSpawn.Disable(); }
             else if (r.Kind == RowKind.Aimbot) { _aimbot.Disable(); }
             else if (r.Kind == RowKind.AbyssVision) { _abyssVision.Disable(); }
-            else if (r.Kind == RowKind.Homing) { _homing.Disable(); }
             else if (r.Kind == RowKind.TileReach) { _tileReach.Disable(); }
             else if (r.Kind == RowKind.MaxMinions) { _maxMinions.Disable(); }
         }
@@ -1242,8 +1231,6 @@ public sealed class TmlForm : Form
             if (_abyssVision.Enabled && _abyssVision.Status != _lastAbyssStatus)
             { _lastAbyssStatus = _abyssVision.Status; AppendLog($"[abyss vision] {_lastAbyssStatus}"); }
 
-            if (_homing.Enabled && _homing.Status != _lastHomingStatus)
-            { _lastHomingStatus = _homing.Status; AppendLog($"[homing] {_lastHomingStatus}"); }
 
             // Fast-tools is asserted by the high-frequency writer (the held item is recomputed
             // every frame by Calamity, so a slow write loses). The slow tick re-snapshots
@@ -1309,7 +1296,9 @@ public sealed class TmlForm : Form
         var enemyR = _rows.FirstOrDefault(x => x.Kind == RowKind.Aimbot && x.PatchMethod == "enemy");
         var bossR = _rows.FirstOrDefault(x => x.Kind == RowKind.Aimbot && x.PatchMethod == "boss");
         var cursorR = _rows.FirstOrDefault(x => x.Kind == RowKind.Aimbot && x.PatchMethod == "cursor");
+        var predictR = _rows.FirstOrDefault(x => x.Kind == RowKind.Aimbot && x.PatchMethod == "predict");
         bool enemyOn = enemyR?.Active ?? false, bossOn = bossR?.Active ?? false, cursorOn = cursorR?.Active ?? false;
+        _aimbot.SetPredict(predictR?.Active ?? false);   // lead modifier — pairs with any target mode
         if (!enemyOn && !bossOn && !cursorOn) { _aimbot.Disable(); return; }
         _aimbot.SetPreferBoss(bossOn);
         _aimbot.SetNearCursor(cursorOn);
@@ -1394,7 +1383,6 @@ public sealed class TmlForm : Form
         try { _tileReach.Disable(); } catch { }  // restore the ResetEffects reach defaults
         try { _maxMinions.Disable(); } catch { } // restore the ResetEffects minion-cap default
         try { _abyssVision.Disable(); } catch { } // restore Calamity's darkness load
-        try { _homing.Disable(); } catch { }     // restore the grapeBeer reset
         try { _travelShop.Clear(); } catch { }   // remove the re-roll call cave
         try { _serverCaller.Clear(); } catch { } // remove the shared server game-thread cave
         try { _aimbot.Disable(); } catch { }     // stop overriding the cursor

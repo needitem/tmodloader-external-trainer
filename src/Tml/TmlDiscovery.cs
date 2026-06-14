@@ -129,7 +129,7 @@ public static class TmlDiscovery
         if (itemType != null)
         {
             foreach (var name in new[] { "type", "stack", "maxStack", "prefix", "netID", "favorited",
-                "useTime", "useAnimation", "useStyle", "pick", "axe", "hammer", "tileBoost", "reuseDelay", "accessory", "ammo", "damage" })
+                "useTime", "useAnimation", "useStyle", "pick", "axe", "hammer", "tileBoost", "reuseDelay", "accessory", "ammo", "damage", "shootSpeed" })
             {
                 var f = itemType.GetFieldByName(name);
                 if (f != null) model.ItemFields[name] = f.Offset + HeaderSize;
@@ -255,7 +255,7 @@ public static class TmlDiscovery
         var npcType = FindType(runtime, "Terraria.NPC");
         if (npcType != null)
         {
-            foreach (var name in new[] { "active", "position", "width", "height",
+            foreach (var name in new[] { "active", "position", "velocity", "width", "height",
                 "friendly", "townNPC", "boss", "life", "lifeMax", "damage", "dontTakeDamage", "type" })
             {
                 var f = npcType.GetFieldByName(name);
