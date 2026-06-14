@@ -1592,6 +1592,20 @@ if (mode == "fields")
     return 0;
 }
 
+if (mode == "giveitem") // giveitem <slot> <type> — give a slot a real item via client-thread SetDefaults
+{
+    using var engine = new TmlEngine(); engine.Log += s => Console.WriteLine("  " + s); engine.Attach();
+    int slot = args.Length > 1 ? int.Parse(args[1]) : 0;
+    int type = args.Length > 2 ? int.Parse(args[2]) : 757; // Calamity Devourer of Gods sword fallback
+    Console.WriteLine($"Before: slot {slot} type={engine.ItemInt(slot, "type")} useTime={engine.ItemInt(slot, "useTime")} maxStack={engine.ItemInt(slot, "maxStack")} stack={engine.ItemInt(slot, "stack")}");
+    bool ok = engine.GiveItem(slot, type);
+    Console.WriteLine($"GiveItem queued={ok}; waiting 700ms for the next client frame...");
+    System.Threading.Thread.Sleep(700);
+    Console.WriteLine($"After:  slot {slot} type={engine.ItemInt(slot, "type")} useTime={engine.ItemInt(slot, "useTime")} maxStack={engine.ItemInt(slot, "maxStack")} stack={engine.ItemInt(slot, "stack")} name='{engine.ItemName(engine.ItemInt(slot, "type"))}'");
+    engine.Detach();
+    return 0;
+}
+
 if (mode == "itemlist") // itemlist [filter] — dump the item roster (for the inventory picker)
 {
     using var engine = new TmlEngine(); engine.Attach();

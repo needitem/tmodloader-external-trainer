@@ -633,8 +633,34 @@ public sealed class TmlEngine : IDisposable
         return changed;
     }
 
+    // ---- give a real item via the game's own SetDefaults (client game thread) ----
+    private ClientCaller? _clientCaller;
+
+    /// <summary>Turn an inventory slot into a fully-formed <paramref name="type"/> item by running
+    /// <c>Item.SetDefaults(type)</c> on the client's game thread — so every field (use-time, damage,
+    /// max-stack, the ModItem instance, …) is initialised correctly. Writing only <c>type</c> would leave
+    /// a half-formed item that freezes the player's item-use loop. SetDefaults sets stack=1; edit the grid
+    /// afterward for more. Returns false (with a reason logged) if the call couldn't be queued.</summary>
+    public bool GiveItem(int slot, int type)
+    {
+        var m = Mem; if (m == null || Proc == null) { Log?.Invoke("GiveItem: not attached."); return false; }
+        IntPtr item = InventoryItem(slot);
+        if (item == IntPtr.Zero) { Log?.Invoke("GiveItem: slot has no item object."); return false; }
+        ulong addr; // re-resolve each call — the tiered JIT may have relocated SetDefaults
+        try { addr = TmlDiscovery.ResolveMethodAddr(Proc.Id, "Terraria.Item", "SetDefaults", "Int32)"); }
+        catch (Exception ex) { Log?.Invoke("GiveItem: resolve failed — " + ex.Message); return false; }
+        if (addr == 0) { Log?.Invoke("GiveItem: Item.SetDefaults(int) not jitted."); return false; }
+        _clientCaller ??= new ClientCaller(this);
+        bool ok = _clientCaller.CallInstance(addr, (ulong)item.ToInt64(), type);
+        Log?.Invoke(ok ? $"GiveItem: slot {slot} -> SetDefaults({type}) queued ({_clientCaller.Status})."
+                       : $"GiveItem: failed ({_clientCaller.Status}).");
+        return ok;
+    }
+
     public void Detach()
     {
+        try { _clientCaller?.Clear(); } catch { }
+        _clientCaller = null;
         try { Injector?.RestoreAll(); } catch { /* process may be gone */ }
         Injector = null;
         Mem?.Dispose();

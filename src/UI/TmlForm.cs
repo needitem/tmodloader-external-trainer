@@ -425,13 +425,12 @@ public sealed class TmlForm : Form
         string s = sel.ToString() ?? "";
         int lp = s.LastIndexOf("(#", StringComparison.Ordinal);
         if (lp < 0 || !int.TryParse(s.Substring(lp + 2).TrimEnd(')', ' '), out int type)) return;
-        lock (_engine.Sync)
-        {
-            _engine.SetItemInt(slot, "type", type);
-            if (_engine.ItemInt(slot, "stack") <= 0) _engine.SetItemInt(slot, "stack", 1);
-            _engine.SetItemInt(slot, "prefix", 0);
-        }
-        AppendLog($"Slot {slot}: gave {_engine.ItemName(type)} (#{type}).");
+        // Run the game's own Item.SetDefaults(type) on the client game thread so the item is FULLY formed
+        // (use-time, damage, max-stack, ModItem…). Writing only `type` leaves a half-init item that freezes
+        // the player's item-use loop.
+        bool gave; lock (_engine.Sync) { gave = _engine.GiveItem(slot, type); }
+        AppendLog(gave ? $"Slot {slot}: gave {_engine.ItemName(type)} (#{type}). (SetDefaults sets stack=1; edit the grid for more.)"
+                       : $"Slot {slot}: couldn't give {_engine.ItemName(type)} (#{type}) — see log.");
     }
 
     private static string SlotLabel(int i) => i switch
