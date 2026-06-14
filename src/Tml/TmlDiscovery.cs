@@ -256,7 +256,7 @@ public static class TmlDiscovery
         if (npcType != null)
         {
             foreach (var name in new[] { "active", "position", "velocity", "width", "height",
-                "friendly", "townNPC", "boss", "life", "lifeMax", "damage", "dontTakeDamage", "type" })
+                "friendly", "townNPC", "boss", "life", "lifeMax", "damage", "dontTakeDamage", "catchItem", "type" })
             {
                 var f = npcType.GetFieldByName(name);
                 if (f != null) model.NpcFields[name] = f.Offset + HeaderSize;
