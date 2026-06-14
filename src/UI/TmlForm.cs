@@ -522,7 +522,7 @@ public sealed class TmlForm : Form
             foreach (var r in _rows)
             {
                 if (r.Kind is RowKind.GroupHeader or RowKind.Action) continue;
-                bool editable = r.Kind is RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost or RowKind.RareSpawn or RowKind.SprayRange or RowKind.TileReach or RowKind.MaxMinions;
+                bool editable = r.Kind is RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost or RowKind.RareSpawn or RowKind.SprayRange or RowKind.TileReach or RowKind.MaxMinions or RowKind.AbyssVision;
                 if (!r.Active && !editable) continue;          // inactive non-editable: nothing to remember
                 // Editable rows persist their value even when OFF (prefix "off:") so settings stick.
                 data[r.Desc] = editable ? (r.Active ? "" : "off:") + r.InjectValue
@@ -551,7 +551,7 @@ public sealed class TmlForm : Form
         {
             if (r.Kind is RowKind.GroupHeader or RowKind.Action) continue;
             if (!data.TryGetValue(r.Desc, out var saved)) continue;
-            bool editable = r.Kind is RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost or RowKind.RareSpawn or RowKind.SprayRange or RowKind.TileReach or RowKind.MaxMinions;
+            bool editable = r.Kind is RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost or RowKind.RareSpawn or RowKind.SprayRange or RowKind.TileReach or RowKind.MaxMinions or RowKind.AbyssVision;
             bool inactive = saved.StartsWith("off:", StringComparison.Ordinal);
             string val = inactive ? saved[4..] : saved;
 
@@ -646,9 +646,9 @@ public sealed class TmlForm : Form
                 row.Cells["desc"].Value = r.Desc;
                 row.Cells["value"].Value = r.Kind == RowKind.Action ? "▶ click On"
                     : r.Kind == RowKind.Value ? (r.FrozenText ?? "—")
-                    : r.Kind is RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost or RowKind.SprayRange or RowKind.TileReach or RowKind.MaxMinions ? r.InjectValue
+                    : r.Kind is RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost or RowKind.SprayRange or RowKind.TileReach or RowKind.MaxMinions or RowKind.AbyssVision ? r.InjectValue
                     : "—";
-                row.Cells["value"].ReadOnly = r.Kind is not (RowKind.Value or RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost or RowKind.SprayRange or RowKind.TileReach or RowKind.MaxMinions);
+                row.Cells["value"].ReadOnly = r.Kind is not (RowKind.Value or RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost or RowKind.SprayRange or RowKind.TileReach or RowKind.MaxMinions or RowKind.AbyssVision);
             }
         }
         grid.ResumeLayout();
@@ -656,7 +656,7 @@ public sealed class TmlForm : Form
 
     // Rows whose state IS a number the user sets (shown as that value, not an on/off indicator).
     private static bool IsValueKind(RowKind k) => k is RowKind.DropMult or RowKind.PatchInt
-        or RowKind.SpawnBoost or RowKind.SprayRange or RowKind.TileReach or RowKind.MaxMinions;
+        or RowKind.SpawnBoost or RowKind.SprayRange or RowKind.TileReach or RowKind.MaxMinions or RowKind.AbyssVision or RowKind.AbyssVision;
 
     // ---- interaction ----
 
@@ -807,8 +807,8 @@ public sealed class TmlForm : Form
                 AppendLog($"{(r.Active ? "ON" : "OFF")}: {r.Desc}" + (r.Active ? " (hold attack to auto-aim)" : ""));
                 break;
             case RowKind.AbyssVision:
-                if (r.Active) _abyssVision.Enable(); else _abyssVision.Disable();
-                AppendLog($"{(r.Active ? "ON" : "OFF")}: {r.Desc}");
+                if (r.Active) { float g = float.TryParse(r.InjectValue, out var gv) ? gv : 10f; _abyssVision.SetGlow(g); _abyssVision.Enable(); AppendLog($"ON: {r.Desc} → glow {g:0}"); }
+                else { _abyssVision.Disable(); AppendLog($"OFF: {r.Desc}"); }
                 break;
             case RowKind.BuffClear:
                 // the high-frequency writer removes the buff each tick while active.
@@ -1029,7 +1029,7 @@ public sealed class TmlForm : Form
     {
         if (e.RowIndex < 0) return;
         var grow = _grid.Rows[e.RowIndex];
-        if (grow.Tag is not CheatRow r || r.Kind is not (RowKind.Value or RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost or RowKind.SprayRange or RowKind.TileReach or RowKind.MaxMinions)) return;
+        if (grow.Tag is not CheatRow r || r.Kind is not (RowKind.Value or RowKind.DropMult or RowKind.PatchInt or RowKind.SpawnBoost or RowKind.SprayRange or RowKind.TileReach or RowKind.MaxMinions or RowKind.AbyssVision)) return;
         if (_grid.Columns[e.ColumnIndex].Name == "value")
         {
             _grid.BeginEdit(true);
@@ -1103,6 +1103,14 @@ public sealed class TmlForm : Form
             if (!int.TryParse(text.Trim(), out var sv) || sv < 1) { sv = 10; grow.Cells["value"].Value = "10"; }
             r.InjectValue = sv.ToString();
             if (r.Active) { _maxMinions.SetValue(sv); AppendLog($"Max minions set to {sv} slots"); }
+            SaveConfig();
+            return;
+        }
+        if (r.Kind == RowKind.AbyssVision)
+        {
+            if (!float.TryParse(text.Trim(), out var gv) || gv < 1) { gv = 10; grow.Cells["value"].Value = "10"; }
+            r.InjectValue = gv.ToString("0");
+            if (r.Active) { _abyssVision.SetGlow(gv); AppendLog($"Abyss glow set to {gv:0}"); }
             SaveConfig();
             return;
         }

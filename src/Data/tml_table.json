@@ -4,7 +4,7 @@
   { "group": "👁️ Vision (code injection)", "desc": "Hunter (highlight enemies)", "field": "detectCreature", "kind": "inject" },
   { "group": "👁️ Vision (code injection)", "desc": "Dangersense (highlight traps)", "field": "dangerSense", "kind": "inject" },
   { "group": "👁️ Vision (code injection)", "desc": "Invisible", "field": "invis", "kind": "inject" },
-  { "group": "👁️ Vision (code injection)", "desc": "Abyss/Cave Vision — cancel Calamity's deep-sea & cave screen darkness (Calamity only)", "kind": "abyssvision" },
+  { "group": "👁️ Vision (code injection)", "desc": "Abyss Vision — brighten the deep sea by boosting your light glow (edit the strength; higher = brighter; Calamity only)", "kind": "abyssvision", "value": "10" },
 
   { "group": "🛡️ Survival (code injection)", "desc": "No Fall Damage", "field": "noFallDmg", "kind": "inject" },
   { "group": "🛡️ Survival (code injection)", "desc": "No Knockback", "field": "noKnockback", "kind": "inject" },

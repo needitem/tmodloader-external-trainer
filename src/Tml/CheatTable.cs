@@ -110,7 +110,7 @@ public static class CheatTable
             if (d.Kind.Equals("abyssvision", StringComparison.OrdinalIgnoreCase))
             {
                 EmitGroup(rows, ref lastGroup, d.Group);
-                rows.Add(new CheatRow { Kind = RowKind.AbyssVision, Group = d.Group, Desc = d.Desc });
+                rows.Add(new CheatRow { Kind = RowKind.AbyssVision, Group = d.Group, Desc = d.Desc, InjectValue = d.Value ?? "10" });
                 continue;
             }
             if (d.Kind.Equals("aimbot", StringComparison.OrdinalIgnoreCase))

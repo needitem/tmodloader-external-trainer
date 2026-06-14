@@ -444,15 +444,19 @@ internal static class ClrDiscovery
                     try { dt.DataReader.Read(m.NativeCode, code); } catch { continue; }
                     for (int i = 0; i + 9 <= size; i++)
                     {
-                        int op, modrmPos;
-                        if (code[i] == 0xF3 && code[i + 1] == 0x0F && (code[i + 2] == 0x10 || code[i + 2] == 0x11)) { op = code[i + 2]; modrmPos = i + 3; } // legacy movss
-                        else if (code[i] == 0xC5 && code[i + 1] == 0xFA && (code[i + 2] == 0x10 || code[i + 2] == 0x11)) { op = code[i + 2]; modrmPos = i + 3; } // VEX2 vmovss
+                        int j = i; if (code[j] >= 0x40 && code[j] <= 0x4F) j++; // skip a REX prefix
+                        string kind; int modrmPos;
+                        if (code[j] == 0xF3 && code[j + 1] == 0x0F && (code[j + 2] == 0x10 || code[j + 2] == 0x11)) { kind = code[j + 2] == 0x11 ? "WRITEf" : "read f"; modrmPos = j + 3; }
+                        else if (code[j] == 0xC5 && code[j + 1] == 0xFA && (code[j + 2] == 0x10 || code[j + 2] == 0x11)) { kind = code[j + 2] == 0x11 ? "WRITEf" : "read f"; modrmPos = j + 3; }
+                        else if (code[j] == 0x89) { kind = "WRITEi(reg)"; modrmPos = j + 1; }                 // mov [r+d], r32
+                        else if (code[j] == 0x8B) { kind = "read i"; modrmPos = j + 1; }                       // mov r32, [r+d]
+                        else if (code[j] == 0xC7 && ((code[j + 1] >> 3) & 7) == 0) { kind = "WRITEi(imm)"; modrmPos = j + 1; } // mov dword [r+d], imm32
                         else continue;
                         byte modrm = code[modrmPos]; if ((modrm & 0xC0) != 0x80) continue; // need [reg+disp32]
                         int d = modrmPos + 1 + ((modrm & 7) == 4 ? 1 : 0); // skip SIB if present
                         if (d + 4 > size) continue;
                         if (code[d] == disp[0] && code[d + 1] == disp[1] && code[d + 2] == disp[2] && code[d + 3] == disp[3])
-                        { Console.WriteLine($"  {(op == 0x11 ? "WRITE" : "read ")} {t.Name}.{m.Name} @0x{m.NativeCode:X} (+0x{i:X})"); hits++; }
+                        { Console.WriteLine($"  {kind,-11} {t.Name}.{m.Name} @0x{m.NativeCode:X} (+0x{i:X})"); hits++; }
                     }
                 }
             }

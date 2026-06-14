@@ -1626,6 +1626,103 @@ if (mode == "contentid") // contentid <typeNameSubstr> — ModBuff/ModItem singl
     return 0;
 }
 
+if (mode == "abyssbright") // abyssbright <seconds> — continuously write CalamityPlayer light fields bright
+{
+    int secs = args.Length > 1 ? int.Parse(args[1]) : 12;
+    string only = args.Length > 2 ? args[2] : "all"; // all|dark|glow|ext
+    using var engine = new TmlEngine(); engine.Attach();
+    var m = engine.Mem!; int pid = proc.Id;
+    var pb = engine.PlayerBase();
+    if (pb == IntPtr.Zero) { Console.WriteLine("no world"); return 0; }
+    var r = TmlDiscovery.ResolveCalamityFields(pid, "abyssDarkness", "darknessIntensity", "caveDarkness", "abyssPlayerGlowMultiplier", "externalAbyssLight", "abyssLifeRegenCounter");
+    if (r is not { } v) { Console.WriteLine("no Calamity"); return 0; }
+    int O(string n) => v.offs.GetValueOrDefault(n, 0);
+    Console.WriteLine($"mpOff=0x{v.mpOff:X} calMT=0x{v.calMT:X}");
+    foreach (var kv in v.offs) Console.WriteLine($"  {kv.Key} +0x{kv.Value:X}");
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    int idx = -1;
+    while (sw.Elapsed.TotalSeconds < secs)
+    {
+        IntPtr arr = m.ReadPtr64((IntPtr)(pb.ToInt64() + v.mpOff));
+        if (arr != IntPtr.Zero)
+        {
+            int len = m.ReadInt32((IntPtr)(arr.ToInt64() + 8));
+            if (idx < 0) for (int i = 0; i < len && i < 200; i++) { var e = m.ReadPtr64((IntPtr)(arr.ToInt64() + 0x10 + i * 8)); if (e != IntPtr.Zero && (ulong)m.ReadInt64(e) == v.calMT) { idx = i; break; } }
+            if (idx >= 0)
+            {
+                var cp = m.ReadPtr64((IntPtr)(arr.ToInt64() + 0x10 + idx * 8));
+                if (cp != IntPtr.Zero)
+                {
+                    if ((only is "all" or "dark"))
+                    {
+                        if (O("abyssDarkness") != 0) m.WriteFloat((IntPtr)(cp.ToInt64() + O("abyssDarkness")), 0f);
+                        if (O("darknessIntensity") != 0) m.WriteFloat((IntPtr)(cp.ToInt64() + O("darknessIntensity")), 0f);
+                        if (O("caveDarkness") != 0) m.WriteFloat((IntPtr)(cp.ToInt64() + O("caveDarkness")), 0f);
+                    }
+                    if ((only is "all" or "glow") && O("abyssPlayerGlowMultiplier") != 0) m.WriteFloat((IntPtr)(cp.ToInt64() + O("abyssPlayerGlowMultiplier")), 12f);
+                    if ((only is "all" or "ext") && O("externalAbyssLight") != 0) m.WriteInt32((IntPtr)(cp.ToInt64() + O("externalAbyssLight")), 200);
+                }
+            }
+        }
+        System.Threading.Thread.Sleep(3);
+    }
+    Console.WriteLine($"done ({secs}s), calIdx={idx}");
+    return 0;
+}
+
+if (mode == "glowpatch") // glowpatch <glowVal> — force abyssPlayerGlowMultiplier high at its ResetEffects reset (flicker-free)
+{
+    float val = args.Length > 1 ? float.Parse(args[1]) : 10f;
+    using var engine = new TmlEngine(); engine.Attach();
+    var m = engine.Mem!; int pid = proc.Id;
+    ulong a = ClrDiscovery.ResolveMethodCode(pid, "CalamityMod.CalPlayer.CalamityPlayer", "ResetEffects");
+    if (a == 0) { Console.WriteLine("ResetEffects not jitted"); return 0; }
+    var code = m.ReadBytes((IntPtr)a, 0x2400);
+    var disp = BitConverter.GetBytes(0x368);
+    int pos = -1; int rm = 3;
+    for (int i = 0; i + 8 <= code.Length; i++)
+    {
+        if (code[i] != 0xC5 || code[i + 1] != 0xFA || code[i + 2] != 0x11) continue;   // vmovss [reg+disp],xmm
+        byte md = code[i + 3]; if ((md & 0xC0) != 0x80 || (md & 7) == 4) continue;
+        if (code[i + 4] != disp[0] || code[i + 5] != disp[1] || code[i + 6] != disp[2] || code[i + 7] != disp[3]) continue;
+        pos = i; rm = md & 7; break;
+    }
+    if (pos < 0) { Console.WriteLine("glow store not found"); return 0; }
+    IntPtr cave = m.AllocNear((IntPtr)a, 0x40, Native.MemoryProtection.ExecuteReadWrite);
+    var cb = new System.Collections.Generic.List<byte> { 0xC7, (byte)(0x80 | rm) }; // mov dword [base+0x368], imm32
+    cb.AddRange(disp); cb.AddRange(BitConverter.GetBytes(val));
+    cb.Add(0xE9); cb.AddRange(BitConverter.GetBytes((int)((a + (ulong)pos + 8) - ((ulong)cave.ToInt64() + (ulong)cb.Count + 4))));
+    m.WriteBytes(cave, cb.ToArray());
+    var patch = new byte[8]; patch[0] = 0xE9;
+    BitConverter.GetBytes((int)(cave.ToInt64() - ((long)a + pos + 5))).CopyTo(patch, 1);
+    for (int k = 5; k < 8; k++) patch[k] = 0x90;
+    m.WriteBytes((IntPtr)(a + (ulong)pos), patch);
+    Console.WriteLine($"glow patched @0x{a:X}+0x{pos:X} (base rm={rm}) -> abyssPlayerGlowMultiplier={val}, cave 0x{cave.ToInt64():X}");
+    return 0;
+}
+
+if (mode == "abysspatch") // abysspatch <bright|trans|setabyss|all> — live-apply candidate darkness patches to test
+{
+    string which = args.Length > 1 ? args[1] : "all";
+    using var engine = new TmlEngine(); engine.Attach();
+    var m = engine.Mem!; int pid = proc.Id;
+    ulong Real(ulong a) { for (int i = 0; i < 4 && a != 0; i++) { var b = m.ReadBytes((IntPtr)a, 5); if (b.Length < 5 || b[0] != 0xE9) break; a = (ulong)((long)a + 5 + BitConverter.ToInt32(b, 1)); } return a; }
+    void Ret(string type, string meth) { ulong a = Real(ClrDiscovery.ResolveMethodCode(pid, type, meth)); if (a == 0) { Console.WriteLine($"  {meth}: not jitted"); return; } byte o = m.ReadBytes((IntPtr)a, 1)[0]; m.WriteBytes((IntPtr)a, new byte[] { 0xC3 }); Console.WriteLine($"  {meth} @0x{a:X}: {o:X2} -> C3 (ret)"); }
+    if (which is "bright" or "all") Ret("CalamityMod.Systems.LightingEffectsSystem", "ModifyLightingBrightness");
+    if (which is "setabyss" or "all") Ret("CalamityMod.CalamityUtils", "SetAbyssLightLevels");
+    if (which is "trans" or "all")
+    {
+        var r = TmlDiscovery.ResolveCalamityFields(pid, "darknessIntensity");
+        int dn = r?.offs.GetValueOrDefault("darknessIntensity") ?? 0x370;
+        ulong a = Real(ClrDiscovery.ResolveMethodCode(pid, "CalamityMod.Graphics.EnhancedDarknessSystem", "AdjustTransmissiveness"));
+        if (a == 0) { Console.WriteLine("  AdjustTransmissiveness: not jitted"); }
+        else { var code = m.ReadBytes((IntPtr)a, 0x600); var disp = BitConverter.GetBytes(dn); int hit = -1;
+            for (int i = 0; i + 8 <= code.Length; i++) { if (!((code[i]==0xC5&&code[i+1]==0xFA&&code[i+2]==0x10)) ) continue; byte md=code[i+3]; if ((md&0xC0)!=0x80||(md&7)==4) continue; if (code[i+4]!=disp[0]||code[i+5]!=disp[1]||code[i+6]!=disp[2]||code[i+7]!=disp[3]) continue; int n=(md>>3)&7; byte b2=(byte)(0x80|((~n&0xF)<<3)); m.WriteBytes((IntPtr)(a+(ulong)i), new byte[]{0xC5,b2,0x57,(byte)(0xC0|(n<<3)|n),0x90,0x90,0x90,0x90}); hit=i; break; }
+            Console.WriteLine(hit>=0 ? $"  AdjustTransmissiveness @0x{a:X}+0x{hit:X}: vmovss -> vxorps" : "  AdjustTransmissiveness: darkness load not found"); }
+    }
+    return 0;
+}
+
 if (mode == "fieldaccess") // fieldaccess <offsetHex> [modSub] — find methods reading/writing [reg+offset]
 {
     int off = Convert.ToInt32(args.Length > 1 ? args[1] : "370", 16);
