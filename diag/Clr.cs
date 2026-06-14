@@ -451,6 +451,8 @@ internal static class ClrDiscovery
                         else if (code[j] == 0x89) { kind = "WRITEi(reg)"; modrmPos = j + 1; }                 // mov [r+d], r32
                         else if (code[j] == 0x8B) { kind = "read i"; modrmPos = j + 1; }                       // mov r32, [r+d]
                         else if (code[j] == 0xC7 && ((code[j + 1] >> 3) & 7) == 0) { kind = "WRITEi(imm)"; modrmPos = j + 1; } // mov dword [r+d], imm32
+                        else if (code[j] == 0xC6 && ((code[j + 1] >> 3) & 7) == 0) { kind = "WRITEb(imm)"; modrmPos = j + 1; } // mov byte [r+d], imm8
+                        else if (code[j] == 0x88) { kind = "WRITEb(reg)"; modrmPos = j + 1; }                  // mov [r+d], r8
                         else continue;
                         byte modrm = code[modrmPos]; if ((modrm & 0xC0) != 0x80) continue; // need [reg+disp32]
                         int d = modrmPos + 1 + ((modrm & 7) == 4 ? 1 : 0); // skip SIB if present

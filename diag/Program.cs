@@ -1592,6 +1592,16 @@ if (mode == "fields")
     return 0;
 }
 
+if (mode == "rarelist") // dump the Force-Rare-Spawn list; flag modded (type>688) entries
+{
+    var list = TmlDiscovery.EnumerateRareNpcs(proc.Id, 2);
+    string f = args.Length > 1 ? args[1] : "";
+    int modded = list.Count(x => x.type > 688);
+    Console.WriteLine($"rare list: {list.Count} total, {modded} modded (type>688)" + (f.Length > 0 ? $"; filter='{f}'" : ""));
+    foreach (var x in list.Where(x => f.Length == 0 ? x.type > 688 : x.name.Contains(f)).Take(60)) Console.WriteLine($"  ★{x.stars} #{x.type} {x.name}");
+    return 0;
+}
+
 if (mode == "townnpcs") // dump the town-NPC roster + which are currently present
 {
     using var engine = new TmlEngine();
@@ -1667,6 +1677,22 @@ if (mode == "abyssbright") // abyssbright <seconds> — continuously write Calam
         System.Threading.Thread.Sleep(3);
     }
     Console.WriteLine($"done ({secs}s), calIdx={idx}");
+    return 0;
+}
+
+if (mode == "homingpatch") // flip grapeBeer reset 0->1 in ResetEffects (homing, no buff)
+{
+    using var engine = new TmlEngine(); engine.Attach();
+    var m = engine.Mem!; int pid = proc.Id;
+    var r = TmlDiscovery.ResolveCalamityFields(pid, "grapeBeer");
+    int gb = r?.offs.GetValueOrDefault("grapeBeer") ?? 0x79F;
+    ulong a = ClrDiscovery.ResolveMethodCode(pid, "CalamityMod.CalPlayer.CalamityPlayer", "ResetEffects");
+    if (a == 0) { Console.WriteLine("ResetEffects not jitted"); return 0; }
+    var code = m.ReadBytes((IntPtr)a, 0x2600); var disp = BitConverter.GetBytes(gb); int pos = -1;
+    for (int i = 0; i + 7 <= code.Length; i++) { if (code[i] != 0xC6) continue; byte md = code[i + 1]; if ((md & 0xC0) != 0x80 || ((md >> 3) & 7) != 0 || (md & 7) == 4) continue; if (code[i + 2] != disp[0] || code[i + 3] != disp[1] || code[i + 4] != disp[2] || code[i + 5] != disp[3]) continue; if (code[i + 6] != 0) continue; pos = i + 6; break; }
+    if (pos < 0) { Console.WriteLine($"grapeBeer(0x{gb:X}) reset not found"); return 0; }
+    m.WriteBytes((IntPtr)(a + (ulong)pos), new byte[] { 1 });
+    Console.WriteLine($"grapeBeer reset @0x{a:X}+0x{pos:X} flipped 00->01 (homing on)");
     return 0;
 }
 
